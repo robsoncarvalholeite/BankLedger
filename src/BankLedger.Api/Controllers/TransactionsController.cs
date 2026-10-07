@@ -3,6 +3,7 @@ using BankLedger.Domain.UseCases;
 using BankLedger.Domain.Enums;
 using BankLedger.Domain.ValueObjects;
 using Microsoft.AspNetCore.Mvc;
+using BankLedger.Domain.Exceptions;
 
 namespace BankLedger.Api.Controllers;
 
@@ -64,11 +65,11 @@ public sealed class TransactionsController : ControllerBase
         {
             return BadRequest(ex.Message);
         }
-        catch (BankLedger.Domain.Exceptions.InsufficientBalanceException ex)
+        catch (InsufficientBalanceException ex)
         {
             return UnprocessableEntity(new { error = ex.Message, requested = ex.Requested, available = ex.Available });
         }
-        catch (BankLedger.Domain.Exceptions.ConcurrencyException)
+        catch (ConcurrencyException)
         {
             return Conflict(new { error = "Concurrency conflict, please retry" });
         }
