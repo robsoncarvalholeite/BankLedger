@@ -59,6 +59,15 @@ public class TransactionTests
     }
 
     [Fact]
+    public void Constructor_InvalidTransactionType_Throws()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            new Transaction("123456", new Money(100), (TransactionType)999, Guid.NewGuid()));
+
+        Assert.Contains("Invalid transaction type", ex.Message);
+    }
+
+    [Fact]
     public void Restore_CreatesTransactionWithAllProperties()
     {
         var idempotencyKey = Guid.NewGuid();
