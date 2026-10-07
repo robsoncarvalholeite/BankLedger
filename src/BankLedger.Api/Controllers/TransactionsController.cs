@@ -51,15 +51,7 @@ public sealed class TransactionsController : ControllerBase
                 idempotencyKey,
                 cancellationToken);
 
-            return CreatedAtAction(nameof(Create), new { id = transaction.Id }, new
-            {
-                id = transaction.Id,
-                accountNumber = transaction.AccountNumber,
-                amount = transaction.Amount.Amount,
-                type = transaction.Type.ToString(),
-                createdAt = transaction.CreatedAt,
-                idempotencyKey = transaction.IdempotencyKey
-            });
+            return Created("", null);
         }
         catch (ArgumentException ex)
         {

@@ -20,15 +20,15 @@ public sealed class CreateTransactionUseCase
         Money amount,
         TransactionType type,
         Guid idempotencyKey,
-        CancellationToken cancellationToken)
+        CancellationToken ct)
     {
-        var existingTransaction = await _transactionRepository.GetByIdempotencyKeyAsync(idempotencyKey, cancellationToken);
+        var existingTransaction = await _transactionRepository.GetByIdempotencyKeyAsync(idempotencyKey, ct);
         if (existingTransaction is not null)
         {
             return existingTransaction;
         }
 
-        var currentBalance = await _transactionRepository.GetBalanceDeltaAsync(accountNumber, 0, null, cancellationToken);
+        var currentBalance = await _transactionRepository.GetBalanceDeltaAsync(accountNumber, 0, null, ct);
 
         if (type == TransactionType.DEBIT)
         {
@@ -40,6 +40,6 @@ public sealed class CreateTransactionUseCase
         }
 
         var transaction = new Transaction(accountNumber, amount, type, idempotencyKey);
-        return await _transactionRepository.CreateAsync(transaction, cancellationToken);
+        return await _transactionRepository.CreateAsync(transaction, ct);
     }
 }
