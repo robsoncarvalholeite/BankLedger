@@ -28,8 +28,6 @@ public sealed class CreateTransactionUseCase
         Guid idempotencyKey,
         CancellationToken ct)
     {
-        const int MAX_ATTEMPTS = 5;
-
         if (await _idempotencyLock.ExistsAsync(idempotencyKey, ct)) return;
 
         if (TransactionType.DEBIT == type)
@@ -38,7 +36,7 @@ public sealed class CreateTransactionUseCase
             if (currentBalance < amount) throw new InsufficientBalanceException(accountNumber, amount.Amount, currentBalance.Amount);
         }
 
-        var attempt = 0;
+        var retries = 5;
         do
         {
             try
@@ -51,11 +49,11 @@ public sealed class CreateTransactionUseCase
                 await _idempotencyLock.AddAsync(idempotencyKey, ct);
                 return;
             }
-            catch (ConcurrencyException){}
+            catch (ConcurrencyException) { }
 
-        } while (attempt++ < MAX_ATTEMPTS);
+        } while (retries-- > 0);
 
-        throw new ConcurrencyException($"Failed to create transaction after {MAX_ATTEMPTS} attempts due to concurrency conflicts.");
+        throw new ConcurrencyException($"Failed to create transaction after 5 attempts due to concurrency conflicts.");
 
     }
 }
