@@ -5,27 +5,29 @@ namespace BankLedger.Domain.Entities;
 
 public sealed class Transaction
 {
-    public long Id { get; private set; }
-    public string AccountNumber { get; private set; }
+    public Guid Id { get; private set; }
+    public Guid AccountId { get; private set; }
     public Money Amount { get; private set; }
     public TransactionType Type { get; private set; }
     public DateTime CreatedAt { get; private set; }
     public long OccVersion { get; private set; }
 
     public Transaction(
-        string accountNumber,
+        Guid accountId,
         Money amount,
         TransactionType type,
         long occVersion)
     {
-        if (string.IsNullOrWhiteSpace(accountNumber))
-            throw new ArgumentException("Account number is required", nameof(accountNumber));
+        if (accountId == Guid.Empty)
+            throw new ArgumentException("Account ID is required", nameof(accountId));
         if (amount.Amount <= 0)
             throw new ArgumentException("Transaction amount must be positive", nameof(amount));
         if (!Enum.IsDefined(typeof(TransactionType), type))
             throw new ArgumentException("Invalid transaction type", nameof(type));
+        if (occVersion <= 0)
+            throw new ArgumentException("OccVersion must be positive", nameof(occVersion));
 
-        AccountNumber = accountNumber;
+        AccountId = accountId;
         Amount = amount;
         Type = type;
         CreatedAt = DateTime.UtcNow;
@@ -33,14 +35,14 @@ public sealed class Transaction
     }
 
     public static Transaction Restore(
-        long id,
-        string accountNumber,
+        Guid id,
+        Guid accountId,
         Money amount,
         TransactionType type,
         DateTime createdAt,
         long occVersion)
     {
-        var transaction = new Transaction(accountNumber, amount, type, occVersion);
+        var transaction = new Transaction(accountId, amount, type, occVersion);
         transaction.Id = id;
         transaction.CreatedAt = createdAt;
         transaction.OccVersion = occVersion;

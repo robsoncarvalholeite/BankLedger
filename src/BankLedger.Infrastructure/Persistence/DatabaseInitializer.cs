@@ -8,38 +8,39 @@ public static class DatabaseInitializer
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            CREATE TABLE IF NOT EXISTS Accounts (
-                Number TEXT PRIMARY KEY
+            CREATE TABLE IF NOT EXISTS accounts (
+                id TEXT PRIMARY KEY,
+                number TEXT NOT NULL UNIQUE
             );
 
-            CREATE TABLE IF NOT EXISTS Transactions (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                AccountNumber TEXT NOT NULL,
-                AmountCents INTEGER NOT NULL,
-                Type TEXT NOT NULL,
-                CreatedAt TEXT NOT NULL,
-                IdempotencyKey TEXT NOT NULL,
-                FOREIGN KEY (AccountNumber) REFERENCES Accounts(Number),
-                UNIQUE(AccountNumber, IdempotencyKey)
+            CREATE TABLE IF NOT EXISTS transactions (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                amount_in_cents INTEGER NOT NULL,
+                type TEXT NOT NULL CHECK (type IN ('C', 'D')),
+                created_at TEXT NOT NULL,
+                occ_version INTEGER NOT NULL,
+                FOREIGN KEY (account_id) REFERENCES accounts(id)
             );
 
-            CREATE TABLE IF NOT EXISTS BalanceSnapshots (
-                AccountNumber TEXT PRIMARY KEY,
-                BalanceCents INTEGER NOT NULL,
-                LastTransactionId INTEGER NOT NULL,
-                Sequence INTEGER NOT NULL,
-                CreatedAt TEXT NOT NULL,
-                FOREIGN KEY (AccountNumber) REFERENCES Accounts(Number)
+            CREATE TABLE IF NOT EXISTS balance_snapshots (
+                account_id TEXT PRIMARY KEY,
+                balance_in_cents INTEGER NOT NULL,
+                last_transaction_id TEXT NOT NULL,
+                occ_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (account_id) REFERENCES accounts(id),
+                FOREIGN KEY (last_transaction_id) REFERENCES transactions(id)
             );
 
-            CREATE INDEX IF NOT EXISTS IX_Transactions_Account_Id
-            ON Transactions(AccountNumber, Id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uk_transactions_account_occ_version
+            ON transactions(account_id, occ_version);
 
-            CREATE INDEX IF NOT EXISTS IX_Transactions_Account_CreatedAt
-            ON Transactions(AccountNumber, CreatedAt);
+            CREATE INDEX IF NOT EXISTS ix_transactions_account_id
+            ON transactions(account_id);
 
-            CREATE INDEX IF NOT EXISTS IX_Transactions_Idempotency
-            ON Transactions(AccountNumber, IdempotencyKey);
+            CREATE INDEX IF NOT EXISTS ix_transactions_account_created_at
+            ON transactions(account_id, created_at);
             """;
         command.ExecuteNonQuery();
     }

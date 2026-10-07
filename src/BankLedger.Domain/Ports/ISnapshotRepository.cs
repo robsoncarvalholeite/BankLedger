@@ -5,14 +5,13 @@ namespace BankLedger.Domain.Ports;
 public interface ISnapshotRepository
 {
     Task<BalanceSnapshot?> GetAsync(
-        string accountNumber,
+        Guid accountId,
         CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<string>> GetAccountsWithNewTransactionsAsync(
+    Task<IReadOnlyList<Guid>> GetAccountsWithNewTransactionsAsync(
         CancellationToken cancellationToken);
 
-    Task<bool> UpdateAsync(
+    Task<BalanceSnapshot> CreateAsync(
         BalanceSnapshot snapshot,
-        long expectedSequence,
         CancellationToken cancellationToken);
 }

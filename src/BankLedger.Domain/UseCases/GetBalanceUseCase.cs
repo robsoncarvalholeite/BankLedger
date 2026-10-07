@@ -18,25 +18,20 @@ public sealed class GetBalanceUseCase
     }
 
     public async Task<Money> ExecuteAsync(
-        string accountNumber,
-        DateTime? from,
+        Guid accountId,
+        Guid? lastTransactionId,
         CancellationToken ct)
     {
-        var snapshot = await _snapshotRepository.GetAsync(accountNumber, ct);
+        var snapshot = await _snapshotRepository.GetAsync(accountId, ct);
 
-        if (snapshot is not null)
-        {
-            Money delta = await _transactionRepository.GetBalanceDeltaAsync(
-                accountNumber,
-                snapshot.LastTransactionId,
-                from,
-                ct);
-            return snapshot.Balance + delta;
-        }
-        return await _transactionRepository.GetBalanceDeltaAsync(
-            accountNumber,
-            0,
-            from,
+        var fromTxnId = lastTransactionId ?? snapshot?.LastTransactionId ?? Guid.Empty;
+
+        var delta = await _transactionRepository.GetBalanceDeltaAsync(
+            accountId,
+            fromTxnId,
+            null,
             ct);
+
+        return (snapshot?.Balance ?? new Money(0)) + delta;
     }
 }

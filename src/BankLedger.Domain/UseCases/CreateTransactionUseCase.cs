@@ -22,7 +22,7 @@ public sealed class CreateTransactionUseCase
     }
 
     public async Task ExecuteAsync(
-        string accountNumber,
+        Guid accountId,
         Money amount,
         TransactionType type,
         Guid idempotencyKey,
@@ -32,8 +32,8 @@ public sealed class CreateTransactionUseCase
 
         if (TransactionType.DEBIT == type)
         {
-            var currentBalance = await _getBalanceUseCase.ExecuteAsync(accountNumber, null, ct);
-            if (currentBalance < amount) throw new InsufficientBalanceException(accountNumber, amount.Amount, currentBalance.Amount);
+            var currentBalance = await _getBalanceUseCase.ExecuteAsync(accountId, null, ct);
+            if (currentBalance < amount) throw new InsufficientBalanceException(accountId.ToString(), amount.Amount, currentBalance.Amount);
         }
 
         var retries = 5;
@@ -41,9 +41,9 @@ public sealed class CreateTransactionUseCase
         {
             try
             {
-                long newOccVersion = await _concurrencyStore.NextAsync(accountNumber, ct);
+                long newOccVersion = await _concurrencyStore.NextAsync(accountId.ToString(), ct);
 
-                var transaction = new Transaction(accountNumber, amount, type, newOccVersion);
+                var transaction = new Transaction(accountId, amount, type, newOccVersion);
                 await _transactionRepository.CreateAsync(transaction, ct);
 
                 await _idempotencyLock.AddAsync(idempotencyKey, ct);
@@ -54,6 +54,5 @@ public sealed class CreateTransactionUseCase
         } while (retries-- > 0);
 
         throw new ConcurrencyException($"Failed to create transaction after 5 attempts due to concurrency conflicts.");
-
     }
 }

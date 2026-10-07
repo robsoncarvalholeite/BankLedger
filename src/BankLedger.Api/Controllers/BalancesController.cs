@@ -24,15 +24,16 @@ public sealed class BalancesController : ControllerBase
         [FromQuery] DateTime? from,
         CancellationToken cancellationToken)
     {
-        var accountNumber = HttpContext.Items["AccountNumber"]?.ToString();
+        var accountId = HttpContext.Items["AccountId"] as Guid?;
 
-        if (string.IsNullOrEmpty(accountNumber))
+        if (accountId == null || accountId == Guid.Empty)
         {
             return Unauthorized("Account not authenticated");
         }
 
-        var balance = await _getBalanceUseCase.ExecuteAsync(accountNumber, from, cancellationToken);
+        var balance = await _getBalanceUseCase.ExecuteAsync(accountId.Value, null, cancellationToken);
 
+        var accountNumber = HttpContext.Items["AccountNumber"]?.ToString() ?? "";
         var response = new BalanceResponse
         {
             AccountNumber = accountNumber,

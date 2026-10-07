@@ -30,9 +30,9 @@ public sealed class TransactionsController : ControllerBase
         [FromHeader(Name = "Idempotency-Key")] Guid idempotencyKey,
         CancellationToken cancellationToken)
     {
-        var accountNumber = HttpContext.Items["AccountNumber"]?.ToString();
+        var accountId = HttpContext.Items["AccountId"] as Guid?;
 
-        if (string.IsNullOrEmpty(accountNumber))
+        if (accountId == null || accountId == Guid.Empty)
         {
             return Unauthorized("Account not authenticated");
         }
@@ -45,7 +45,7 @@ public sealed class TransactionsController : ControllerBase
         try
         {
             await _createTransactionUseCase.ExecuteAsync(
-                accountNumber,
+                accountId.Value,
                 new Money(request.Amount),
                 request.Type,
                 idempotencyKey,

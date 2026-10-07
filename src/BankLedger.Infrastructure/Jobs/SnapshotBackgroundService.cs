@@ -57,68 +57,60 @@ public sealed class SnapshotBackgroundService : BackgroundService
         var transactionRepository = scope.ServiceProvider.GetRequiredService<ITransactionRepository>();
         var snapshotRepository = scope.ServiceProvider.GetRequiredService<ISnapshotRepository>();
 
-        var accounts = await snapshotRepository.GetAccountsWithNewTransactionsAsync(cancellationToken);
+        var accountIds = await snapshotRepository.GetAccountsWithNewTransactionsAsync(cancellationToken);
 
-        foreach (var accountNumber in accounts)
+        foreach (var accountId in accountIds)
         {
             if (cancellationToken.IsCancellationRequested)
                 break;
 
             try
             {
-                await UpdateSnapshotForAccountAsync(accountNumber, transactionRepository, snapshotRepository, cancellationToken);
+                await CreateSnapshotForAccountAsync(accountId, transactionRepository, snapshotRepository, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error updating snapshot for account {AccountNumber}", accountNumber);
+                _logger.LogError(ex, "Error creating snapshot for account {AccountId}", accountId);
             }
         }
     }
 
-    private async Task UpdateSnapshotForAccountAsync(
-        string accountNumber,
+    private async Task CreateSnapshotForAccountAsync(
+        Guid accountId,
         ITransactionRepository transactionRepository,
         ISnapshotRepository snapshotRepository,
         CancellationToken cancellationToken)
     {
-        var snapshot = await snapshotRepository.GetAsync(accountNumber, cancellationToken);
+        var snapshot = await snapshotRepository.GetAsync(accountId, cancellationToken);
 
-        long lastTransactionId = 0;
-        Money balance = new Money(0);
-        long expectedSequence = 0;
+        var lastTransactionId = snapshot?.LastTransactionId ?? Guid.Empty;
+        var balance = snapshot?.Balance ?? new Money(0);
+        var lastOccVersion = snapshot?.OccVersion ?? 0;
 
-        if (snapshot is not null)
-        {
-            lastTransactionId = snapshot.LastTransactionId;
-            balance = snapshot.Balance;
-            expectedSequence = snapshot.Sequence;
-        }
-
-        var delta = await transactionRepository.GetBalanceDeltaAsync(accountNumber, lastTransactionId, null, cancellationToken);
+        var delta = await transactionRepository.GetBalanceDeltaAsync(accountId, lastTransactionId, null, cancellationToken);
         var newBalance = balance + delta;
 
-        var latestTransaction = await GetLatestTransactionIdAsync(accountNumber, cancellationToken);
-        if (latestTransaction == 0)
+        var latestTransactionId = await GetLatestTransactionIdAsync(accountId, cancellationToken);
+        if (latestTransactionId == Guid.Empty)
             return;
 
-        var newSnapshot = snapshot is null
-            ? new BalanceSnapshot(accountNumber, newBalance, latestTransaction, 0)
-            : snapshot.Update(newBalance, latestTransaction);
+        var newOccVersion = lastOccVersion + 1;
 
-        var success = await snapshotRepository.UpdateAsync(newSnapshot, expectedSequence, cancellationToken);
+        var newSnapshot = new BalanceSnapshot(accountId, newBalance, latestTransactionId, newOccVersion);
 
-        if (!success)
-        {
-            _logger.LogWarning("Concurrency conflict updating snapshot for account {AccountNumber}, retrying next cycle", accountNumber);
-        }
+        await snapshotRepository.CreateAsync(newSnapshot, cancellationToken);
+
+        _logger.LogInformation("Created snapshot for account {AccountId} with occ_version {OccVersion}", accountId, newOccVersion);
     }
 
-    private async Task<long> GetLatestTransactionIdAsync(string accountNumber, CancellationToken cancellationToken)
+    private async Task<Guid> GetLatestTransactionIdAsync(Guid accountId, CancellationToken cancellationToken)
     {
         using var connection = _connectionFactory.CreateConnection();
 
-        return await connection.ExecuteScalarAsync<long>(
-            "SELECT COALESCE(MAX(Id), 0) FROM Transactions WHERE AccountNumber = @AccountNumber",
-            new { AccountNumber = accountNumber });
+        var result = await connection.ExecuteScalarAsync<string>(
+            "SELECT id FROM transactions WHERE account_id = @AccountId ORDER BY created_at DESC LIMIT 1",
+            new { AccountId = accountId.ToString() });
+
+        return result != null ? Guid.Parse(result) : Guid.Empty;
     }
 }

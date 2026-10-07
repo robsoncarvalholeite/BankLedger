@@ -11,35 +11,63 @@ namespace BankLedger.Infrastructure.Persistence;
 public sealed class TransactionRepository : ITransactionRepository
 {
     private readonly SqliteConnectionFactory _connectionFactory;
+    private static readonly Dictionary<char, TransactionType> _typeMap = new()
+    {
+        ['C'] = TransactionType.CREDIT,
+        ['D'] = TransactionType.DEBIT
+    };
+    private static readonly Dictionary<TransactionType, char> _typeMapReverse = new()
+    {
+        [TransactionType.CREDIT] = 'C',
+        [TransactionType.DEBIT] = 'D'
+    };
 
     public TransactionRepository(SqliteConnectionFactory connectionFactory)
     {
         _connectionFactory = connectionFactory;
     }
 
-    public async Task<Money> GetBalanceDeltaAsync(string accountNumber, long lastTransactionId, DateTime? until, CancellationToken cancellationToken)
+    public async Task<Money> GetBalanceDeltaAsync(Guid accountId, Guid lastTransactionId, DateTime? until, CancellationToken cancellationToken)
     {
         using var connection = _connectionFactory.CreateConnection();
 
-        var sql = "SELECT AmountCents, Type FROM Transactions WHERE AccountNumber = @AccountNumber AND Id > @LastTransactionId";
-        dynamic parameters = new { AccountNumber = accountNumber, LastTransactionId = lastTransactionId };
+        var sql = """
+            SELECT 
+                t.amount_in_cents as AmountCents,
+                t.type as Type
+            FROM transactions t
+            WHERE t.account_id = @AccountId
+              AND t.id > @LastTransactionId
+            """;
+
+        object parameters = new
+        {
+            AccountId = accountId.ToString(),
+            LastTransactionId = lastTransactionId.ToString()
+        };
 
         if (until.HasValue)
         {
-            sql += " AND CreatedAt <= @Until";
-            parameters = new { AccountNumber = accountNumber, LastTransactionId = lastTransactionId, Until = until.Value.ToString("o") };
+            sql += " AND t.created_at <= @Until";
+            parameters = new
+            {
+                AccountId = accountId.ToString(),
+                LastTransactionId = lastTransactionId.ToString(),
+                Until = until.Value.ToString("o")
+            };
         }
 
-        var rows = await connection.QueryAsync<BalanceDeltaRow>(sql, (object)parameters);
+        var rows = await connection.QueryAsync<BalanceDeltaRow>(sql, parameters);
 
         var balance = new Money(0);
         foreach (var row in rows)
         {
             var amount = new Money(row.AmountCents / 100m);
-            balance = row.Type switch
+            var type = _typeMap.GetValueOrDefault(row.Type[0], throwInvalidType(row.Type));
+            balance = type switch
             {
-                "CREDIT" => balance + amount,
-                "DEBIT" => balance - amount,
+                TransactionType.CREDIT => balance + amount,
+                TransactionType.DEBIT => balance - amount,
                 _ => throw new InvalidOperationException($"Unknown transaction type: {row.Type}")
             };
         }
@@ -54,41 +82,50 @@ public sealed class TransactionRepository : ITransactionRepository
 
         try
         {
+            var accountIdStr = transaction.AccountId.ToString();
+
             await connection.ExecuteAsync(
-                "INSERT OR IGNORE INTO Accounts (Number) VALUES (@AccountNumber)",
-                new { AccountNumber = transaction.AccountNumber },
+                "INSERT OR IGNORE INTO accounts (id, number) VALUES (@AccountId, @AccountNumber)",
+                new { AccountId = accountIdStr, AccountNumber = accountIdStr },
                 dbTransaction);
 
-            var id = await connection.ExecuteScalarAsync<long>(
-                @"INSERT INTO Transactions (AccountNumber, AmountCents, Type, CreatedAt, OccVersion)
-                  VALUES (@AccountNumber, @AmountCents, @Type, @CreatedAt, @OccVersion);
-                  SELECT last_insert_rowid();",
+            var id = transaction.Id == Guid.Empty ? Guid.CreateVersion7() : transaction.Id;
+            var idStr = id.ToString();
+            var typeChar = _typeMapReverse[transaction.Type];
+
+            await connection.ExecuteAsync(
+                @"INSERT INTO transactions (id, account_id, amount_in_cents, type, created_at, occ_version)
+                  VALUES (@Id, @AccountId, @AmountInCents, @Type, @CreatedAt, @OccVersion)",
                 new
                 {
-                    AccountNumber = transaction.AccountNumber,
-                    AmountCents = (long)(transaction.Amount.Amount * 100),
-                    Type = transaction.Type.ToString(),
+                    Id = idStr,
+                    AccountId = accountIdStr,
+                    AmountInCents = (long)(transaction.Amount.Amount * 100),
+                    Type = typeChar.ToString(),
                     CreatedAt = transaction.CreatedAt.ToString("o"),
                     OccVersion = transaction.OccVersion
                 },
                 dbTransaction);
 
-            var restored = Transaction.Restore(
+            dbTransaction.Commit();
+
+            return Transaction.Restore(
                 id,
-                transaction.AccountNumber,
+                transaction.AccountId,
                 transaction.Amount,
                 transaction.Type,
                 transaction.CreatedAt,
                 transaction.OccVersion);
-            dbTransaction.Commit();
-            return restored;
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19) // UNIQUE constraint violation
         {
             dbTransaction.Rollback();
-            throw new ConcurrencyException($"Transaction with occ-version {transaction.OccVersion} in conflict.");
+            throw new ConcurrencyException($"Transaction with occ-version {transaction.OccVersion} in conflict for account {transaction.AccountId}.");
         }
     }
+
+    private static TransactionType throwInvalidType(string type)
+        => throw new InvalidOperationException($"Unknown transaction type: {type}");
 
     private sealed record BalanceDeltaRow(long AmountCents, string Type);
 }

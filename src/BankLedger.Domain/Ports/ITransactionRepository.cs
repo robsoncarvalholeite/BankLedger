@@ -6,8 +6,8 @@ namespace BankLedger.Domain.Ports;
 public interface ITransactionRepository
 {
     Task<Money> GetBalanceDeltaAsync(
-        string accountNumber,
-        long lastTransactionId,
+        Guid accountId,
+        Guid lastTransactionId,
         DateTime? until,
         CancellationToken cancellationToken);
 
