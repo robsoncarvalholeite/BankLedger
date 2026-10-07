@@ -42,28 +42,31 @@ public sealed class SnapshotRepository : ISnapshotRepository
     {
         using var connection = _connectionFactory.CreateConnection();
         
+        var newSequence = expectedSequence == 0 ? 0 : expectedSequence + 1;
+        
         var affectedRows = await connection.ExecuteAsync(
-            @"UPDATE BalanceSnapshots
-              SET BalanceCents = @BalanceCents,
-                  LastTransactionId = @LastTransactionId,
-                  Sequence = Sequence + 1,
-                  CreatedAt = @CreatedAt
-              WHERE AccountNumber = @AccountNumber AND Sequence = @ExpectedSequence",
+            @"INSERT INTO BalanceSnapshots (AccountNumber, BalanceCents, LastTransactionId, Sequence, CreatedAt)
+              VALUES (@AccountNumber, @BalanceCents, @LastTransactionId, @NewSequence, @CreatedAt)
+              ON CONFLICT(AccountNumber) DO UPDATE SET
+                  BalanceCents = excluded.BalanceCents,
+                  LastTransactionId = excluded.LastTransactionId,
+                  Sequence = CASE 
+                      WHEN @ExpectedSequence = 0 THEN BalanceSnapshots.Sequence + 1
+                      ELSE excluded.Sequence
+                  END,
+                  CreatedAt = excluded.CreatedAt
+              WHERE (@ExpectedSequence = 0 AND BalanceSnapshots.Sequence = 0) OR BalanceSnapshots.Sequence = @ExpectedSequence",
             new
             {
                 AccountNumber = snapshot.AccountNumber,
                 BalanceCents = (long)(snapshot.Balance.Amount * 100),
                 LastTransactionId = snapshot.LastTransactionId,
+                NewSequence = newSequence,
                 ExpectedSequence = expectedSequence,
                 CreatedAt = DateTime.UtcNow.ToString("o")
             });
 
-        if (affectedRows == 0)
-        {
-            return false;
-        }
-
-        return true;
+        return affectedRows > 0;
     }
 
     private sealed record SnapshotRow(string AccountNumber, long BalanceCents, long LastTransactionId, long Sequence, string CreatedAt)
