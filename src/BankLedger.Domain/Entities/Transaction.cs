@@ -34,5 +34,5 @@ public sealed class Transaction
         CreatedAt = DateTime.UtcNow;
     }
 
-    internal void SetId(long id) => Id = id;
+    public void SetId(long id) => Id = id;
 }
