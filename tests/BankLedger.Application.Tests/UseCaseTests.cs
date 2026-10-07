@@ -36,18 +36,30 @@ public class InMemoryTransactionRepository : ITransactionRepository
     public Task<Transaction> CreateAsync(Transaction transaction, CancellationToken cancellationToken)
     {
         var id = _nextId++;
-        transaction.SetId(id);
-        _transactions.Add(transaction);
-        _byIdempotencyKey[transaction.IdempotencyKey] = transaction;
-        return Task.FromResult(transaction);
+        var restored = Transaction.Restore(
+            id,
+            transaction.AccountNumber,
+            transaction.Amount,
+            transaction.Type,
+            transaction.CreatedAt,
+            transaction.IdempotencyKey);
+        _transactions.Add(restored);
+        _byIdempotencyKey[restored.IdempotencyKey] = restored;
+        return Task.FromResult(restored);
     }
 
     public void AddTransaction(Transaction transaction)
     {
         var id = _nextId++;
-        transaction.SetId(id);
-        _transactions.Add(transaction);
-        _byIdempotencyKey[transaction.IdempotencyKey] = transaction;
+        var restored = Transaction.Restore(
+            id,
+            transaction.AccountNumber,
+            transaction.Amount,
+            transaction.Type,
+            transaction.CreatedAt,
+            transaction.IdempotencyKey);
+        _transactions.Add(restored);
+        _byIdempotencyKey[restored.IdempotencyKey] = restored;
     }
 }
 

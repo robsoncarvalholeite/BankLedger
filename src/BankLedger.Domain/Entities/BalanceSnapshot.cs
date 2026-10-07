@@ -34,4 +34,16 @@ public sealed class BalanceSnapshot
     {
         return new BalanceSnapshot(AccountNumber, newBalance, newLastTransactionId, Sequence + 1);
     }
+
+    public static BalanceSnapshot Restore(
+        string accountNumber,
+        Money balance,
+        long lastTransactionId,
+        long sequence,
+        DateTime createdAt)
+    {
+        var snapshot = new BalanceSnapshot(accountNumber, balance, lastTransactionId, sequence);
+        snapshot.CreatedAt = createdAt;
+        return snapshot;
+    }
 }

@@ -34,5 +34,17 @@ public sealed class Transaction
         CreatedAt = DateTime.UtcNow;
     }
 
-    public void SetId(long id) => Id = id;
+    public static Transaction Restore(
+        long id,
+        string accountNumber,
+        Money amount,
+        TransactionType type,
+        DateTime createdAt,
+        Guid idempotencyKey)
+    {
+        var transaction = new Transaction(accountNumber, amount, type, idempotencyKey);
+        transaction.Id = id;
+        transaction.CreatedAt = createdAt;
+        return transaction;
+    }
 }

@@ -57,6 +57,28 @@ public class TransactionTests
 
         Assert.Contains("Idempotency key is required", ex.Message);
     }
+
+    [Fact]
+    public void Restore_CreatesTransactionWithAllProperties()
+    {
+        var idempotencyKey = Guid.NewGuid();
+        var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        
+        var transaction = Transaction.Restore(
+            42,
+            "123456",
+            new Money(100.50m),
+            TransactionType.CREDIT,
+            createdAt,
+            idempotencyKey);
+
+        Assert.Equal(42, transaction.Id);
+        Assert.Equal("123456", transaction.AccountNumber);
+        Assert.Equal(new Money(100.50m), transaction.Amount);
+        Assert.Equal(TransactionType.CREDIT, transaction.Type);
+        Assert.Equal(createdAt, transaction.CreatedAt);
+        Assert.Equal(idempotencyKey, transaction.IdempotencyKey);
+    }
 }
 
 public class AccountTests
@@ -134,6 +156,25 @@ public class BalanceSnapshotTests
         Assert.Equal(15, updated.LastTransactionId);
         Assert.Equal(6, updated.Sequence);
         Assert.NotSame(original, updated);
+    }
+
+    [Fact]
+    public void Restore_CreatesSnapshotWithAllProperties()
+    {
+        var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        
+        var snapshot = BalanceSnapshot.Restore(
+            "123456",
+            new Money(1000.50m),
+            10,
+            5,
+            createdAt);
+
+        Assert.Equal("123456", snapshot.AccountNumber);
+        Assert.Equal(new Money(1000.50m), snapshot.Balance);
+        Assert.Equal(10, snapshot.LastTransactionId);
+        Assert.Equal(5, snapshot.Sequence);
+        Assert.Equal(createdAt, snapshot.CreatedAt);
     }
 }
 
