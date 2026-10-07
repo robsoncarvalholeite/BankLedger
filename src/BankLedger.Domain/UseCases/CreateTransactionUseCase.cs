@@ -1,10 +1,10 @@
-using BankLedger.Application.Ports;
+using BankLedger.Domain.Ports;
 using BankLedger.Domain.Entities;
 using BankLedger.Domain.Enums;
 using BankLedger.Domain.Exceptions;
 using BankLedger.Domain.ValueObjects;
 
-namespace BankLedger.Application.UseCases;
+namespace BankLedger.Domain.UseCases;
 
 public sealed class CreateTransactionUseCase
 {

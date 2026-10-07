@@ -1,5 +1,5 @@
 using BankLedger.Application.DTOs;
-using BankLedger.Application.UseCases;
+using BankLedger.Domain.UseCases;
 using BankLedger.Domain.Enums;
 using BankLedger.Domain.ValueObjects;
 using Microsoft.AspNetCore.Mvc;

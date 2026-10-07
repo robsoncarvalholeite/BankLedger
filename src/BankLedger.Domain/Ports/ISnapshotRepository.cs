@@ -1,6 +1,6 @@
 using BankLedger.Domain.Entities;
 
-namespace BankLedger.Application.Ports;
+namespace BankLedger.Domain.Ports;
 
 public interface ISnapshotRepository
 {

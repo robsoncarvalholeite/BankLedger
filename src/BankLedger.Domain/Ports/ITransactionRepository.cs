@@ -1,7 +1,7 @@
 using BankLedger.Domain.Entities;
 using BankLedger.Domain.ValueObjects;
 
-namespace BankLedger.Application.Ports;
+namespace BankLedger.Domain.Ports;
 
 public interface ITransactionRepository
 {

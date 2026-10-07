@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using BankLedger.Domain.Enums;
 
 namespace BankLedger.Application.DTOs;
@@ -6,7 +7,7 @@ namespace BankLedger.Application.DTOs;
 public sealed class CreateTransactionRequest
 {
     [Required]
-    [Range(typeof(decimal), "0.01", "999999999999999999")]
+    [Range(0.01, double.MaxValue)]
     public decimal Amount { get; init; }
 
     [Required]

@@ -1,5 +1,5 @@
 using Dapper;
-using BankLedger.Application.Ports;
+using BankLedger.Domain.Ports;
 using BankLedger.Domain.Entities;
 using BankLedger.Domain.Exceptions;
 using BankLedger.Domain.ValueObjects;

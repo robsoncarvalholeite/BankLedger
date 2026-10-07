@@ -1,16 +1,21 @@
-using BankLedger.Application.Ports;
-using BankLedger.Application.UseCases;
+using BankLedger.Domain.Ports;
+using BankLedger.Domain.UseCases;
 using BankLedger.Infrastructure.Persistence;
 using BankLedger.Infrastructure.Jobs;
 using BankLedger.Api.Middleware;
 using BankLedger.Api.Filters;
 using Microsoft.Data.Sqlite;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add<ValidationFilter>();
+})
+.AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
 builder.Services.AddEndpointsApiExplorer();

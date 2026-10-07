@@ -1,5 +1,5 @@
-using BankLedger.Application.Ports;
-using BankLedger.Application.UseCases;
+using BankLedger.Domain.Ports;
+using BankLedger.Domain.UseCases;
 using BankLedger.Domain.Entities;
 using BankLedger.Domain.Enums;
 using BankLedger.Domain.Exceptions;

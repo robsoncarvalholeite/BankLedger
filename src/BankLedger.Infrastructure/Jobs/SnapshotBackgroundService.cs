@@ -1,4 +1,4 @@
-using BankLedger.Application.Ports;
+using BankLedger.Domain.Ports;
 using BankLedger.Domain.Entities;
 using BankLedger.Domain.ValueObjects;
 using BankLedger.Infrastructure.Persistence;
@@ -6,27 +6,25 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Dapper;
 
 namespace BankLedger.Infrastructure.Jobs;
 
 public sealed class SnapshotBackgroundService : BackgroundService
 {
-    private readonly ITransactionRepository _transactionRepository;
-    private readonly ISnapshotRepository _snapshotRepository;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly SqliteConnectionFactory _connectionFactory;
     private readonly ILogger<SnapshotBackgroundService> _logger;
     private readonly TimeSpan _interval;
 
     public SnapshotBackgroundService(
-        ITransactionRepository transactionRepository,
-        ISnapshotRepository snapshotRepository,
+        IServiceScopeFactory scopeFactory,
         SqliteConnectionFactory connectionFactory,
         ILogger<SnapshotBackgroundService> logger,
         IConfiguration configuration)
     {
-        _transactionRepository = transactionRepository;
-        _snapshotRepository = snapshotRepository;
+        _scopeFactory = scopeFactory;
         _connectionFactory = connectionFactory;
         _logger = logger;
         
@@ -55,7 +53,11 @@ public sealed class SnapshotBackgroundService : BackgroundService
 
     private async Task ProcessSnapshotsAsync(CancellationToken cancellationToken)
     {
-        var accounts = await _snapshotRepository.GetAccountsWithNewTransactionsAsync(cancellationToken);
+        using var scope = _scopeFactory.CreateScope();
+        var transactionRepository = scope.ServiceProvider.GetRequiredService<ITransactionRepository>();
+        var snapshotRepository = scope.ServiceProvider.GetRequiredService<ISnapshotRepository>();
+
+        var accounts = await snapshotRepository.GetAccountsWithNewTransactionsAsync(cancellationToken);
 
         foreach (var accountNumber in accounts)
         {
@@ -64,7 +66,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
 
             try
             {
-                await UpdateSnapshotForAccountAsync(accountNumber, cancellationToken);
+                await UpdateSnapshotForAccountAsync(accountNumber, transactionRepository, snapshotRepository, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -73,9 +75,13 @@ public sealed class SnapshotBackgroundService : BackgroundService
         }
     }
 
-    private async Task UpdateSnapshotForAccountAsync(string accountNumber, CancellationToken cancellationToken)
+    private async Task UpdateSnapshotForAccountAsync(
+        string accountNumber,
+        ITransactionRepository transactionRepository,
+        ISnapshotRepository snapshotRepository,
+        CancellationToken cancellationToken)
     {
-        var snapshot = await _snapshotRepository.GetAsync(accountNumber, cancellationToken);
+        var snapshot = await snapshotRepository.GetAsync(accountNumber, cancellationToken);
         
         long lastTransactionId = 0;
         Money balance = new Money(0);
@@ -88,7 +94,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
             expectedSequence = snapshot.Sequence;
         }
 
-        var delta = await _transactionRepository.GetBalanceDeltaAsync(accountNumber, lastTransactionId, null, cancellationToken);
+        var delta = await transactionRepository.GetBalanceDeltaAsync(accountNumber, lastTransactionId, null, cancellationToken);
         var newBalance = balance + delta;
 
         var latestTransaction = await GetLatestTransactionIdAsync(accountNumber, cancellationToken);
@@ -99,7 +105,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
             ? new BalanceSnapshot(accountNumber, newBalance, latestTransaction, 0)
             : snapshot.Update(newBalance, latestTransaction);
 
-        var success = await _snapshotRepository.UpdateAsync(newSnapshot, expectedSequence, cancellationToken);
+        var success = await snapshotRepository.UpdateAsync(newSnapshot, expectedSequence, cancellationToken);
         
         if (!success)
         {
