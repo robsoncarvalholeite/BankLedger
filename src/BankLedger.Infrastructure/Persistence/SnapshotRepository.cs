@@ -41,9 +41,9 @@ public sealed class SnapshotRepository : ISnapshotRepository
     public async Task<bool> UpdateAsync(BalanceSnapshot snapshot, long expectedSequence, CancellationToken cancellationToken)
     {
         using var connection = _connectionFactory.CreateConnection();
-        
+
         var newSequence = expectedSequence == 0 ? 0 : expectedSequence + 1;
-        
+
         var affectedRows = await connection.ExecuteAsync(
             @"INSERT INTO BalanceSnapshots (AccountNumber, BalanceCents, LastTransactionId, Sequence, CreatedAt)
               VALUES (@AccountNumber, @BalanceCents, @LastTransactionId, @NewSequence, @CreatedAt)

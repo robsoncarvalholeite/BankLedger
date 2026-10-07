@@ -72,7 +72,7 @@ public class TransactionTests
     {
         var idempotencyKey = Guid.NewGuid();
         var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
-        
+
         var transaction = Transaction.Restore(
             42,
             "123456",
@@ -171,7 +171,7 @@ public class BalanceSnapshotTests
     public void Restore_CreatesSnapshotWithAllProperties()
     {
         var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
-        
+
         var snapshot = BalanceSnapshot.Restore(
             "123456",
             new Money(1000.50m),

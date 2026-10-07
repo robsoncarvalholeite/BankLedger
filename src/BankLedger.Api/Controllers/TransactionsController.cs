@@ -31,7 +31,7 @@ public sealed class TransactionsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var accountNumber = HttpContext.Items["AccountNumber"]?.ToString();
-        
+
         if (string.IsNullOrEmpty(accountNumber))
         {
             return Unauthorized("Account not authenticated");

@@ -20,7 +20,7 @@ public sealed class AccountAuthorizationMiddleware
         }
 
         var accountNumber = authHeader.ToString().Trim();
-        
+
         if (string.IsNullOrWhiteSpace(accountNumber))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;

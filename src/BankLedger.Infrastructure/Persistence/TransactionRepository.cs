@@ -29,7 +29,7 @@ public sealed class TransactionRepository : ITransactionRepository
     public async Task<Money> GetBalanceDeltaAsync(string accountNumber, long lastTransactionId, DateTime? until, CancellationToken cancellationToken)
     {
         using var connection = _connectionFactory.CreateConnection();
-        
+
         var sql = "SELECT AmountCents, Type FROM Transactions WHERE AccountNumber = @AccountNumber AND Id > @LastTransactionId";
         dynamic parameters = new { AccountNumber = accountNumber, LastTransactionId = lastTransactionId };
 

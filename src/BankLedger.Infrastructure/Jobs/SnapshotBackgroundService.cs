@@ -27,7 +27,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
         _scopeFactory = scopeFactory;
         _connectionFactory = connectionFactory;
         _logger = logger;
-        
+
         var intervalMinutes = configuration.GetValue<int>("SNAPSHOT_INTERVAL_MINUTES", 5);
         _interval = TimeSpan.FromMinutes(intervalMinutes);
     }
@@ -82,7 +82,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
         CancellationToken cancellationToken)
     {
         var snapshot = await snapshotRepository.GetAsync(accountNumber, cancellationToken);
-        
+
         long lastTransactionId = 0;
         Money balance = new Money(0);
         long expectedSequence = 0;
@@ -106,7 +106,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
             : snapshot.Update(newBalance, latestTransaction);
 
         var success = await snapshotRepository.UpdateAsync(newSnapshot, expectedSequence, cancellationToken);
-        
+
         if (!success)
         {
             _logger.LogWarning("Concurrency conflict updating snapshot for account {AccountNumber}, retrying next cycle", accountNumber);
@@ -116,7 +116,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
     private async Task<long> GetLatestTransactionIdAsync(string accountNumber, CancellationToken cancellationToken)
     {
         using var connection = _connectionFactory.CreateConnection();
-        
+
         return await connection.ExecuteScalarAsync<long>(
             "SELECT COALESCE(MAX(Id), 0) FROM Transactions WHERE AccountNumber = @AccountNumber",
             new { AccountNumber = accountNumber });
