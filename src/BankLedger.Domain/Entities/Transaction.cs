@@ -10,13 +10,13 @@ public sealed class Transaction
     public Money Amount { get; private set; }
     public TransactionType Type { get; private set; }
     public DateTime CreatedAt { get; private set; }
-    public Guid IdempotencyKey { get; private set; }
+    public long OccVersion { get; private set; }
 
     public Transaction(
         string accountNumber,
         Money amount,
         TransactionType type,
-        Guid idempotencyKey)
+        long occVersion)
     {
         if (string.IsNullOrWhiteSpace(accountNumber))
             throw new ArgumentException("Account number is required", nameof(accountNumber));
@@ -24,14 +24,12 @@ public sealed class Transaction
             throw new ArgumentException("Transaction amount must be positive", nameof(amount));
         if (!Enum.IsDefined(typeof(TransactionType), type))
             throw new ArgumentException("Invalid transaction type", nameof(type));
-        if (idempotencyKey == Guid.Empty)
-            throw new ArgumentException("Idempotency key is required", nameof(idempotencyKey));
 
         AccountNumber = accountNumber;
         Amount = amount;
         Type = type;
-        IdempotencyKey = idempotencyKey;
         CreatedAt = DateTime.UtcNow;
+        OccVersion = occVersion;
     }
 
     public static Transaction Restore(
@@ -40,11 +38,12 @@ public sealed class Transaction
         Money amount,
         TransactionType type,
         DateTime createdAt,
-        Guid idempotencyKey)
+        long occVersion)
     {
-        var transaction = new Transaction(accountNumber, amount, type, idempotencyKey);
+        var transaction = new Transaction(accountNumber, amount, type, occVersion);
         transaction.Id = id;
         transaction.CreatedAt = createdAt;
+        transaction.OccVersion = occVersion;
         return transaction;
     }
 }

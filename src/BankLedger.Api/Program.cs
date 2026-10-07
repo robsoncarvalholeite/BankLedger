@@ -41,6 +41,8 @@ var connectionString = builder.Configuration.GetConnectionString("Default") ?? "
 builder.Services.AddSingleton<SqliteConnectionFactory>(_ => new SqliteConnectionFactory(connectionString));
 builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
 builder.Services.AddScoped<ISnapshotRepository, SnapshotRepository>();
+builder.Services.AddScoped<IdempotencyLock, InMemoryIdempotencyLock>();
+builder.Services.AddScoped<IConcurrencyStore, InMemoryConcurrencyStore>();
 builder.Services.AddScoped<CreateTransactionUseCase>();
 builder.Services.AddScoped<GetBalanceUseCase>();
 builder.Services.AddHostedService<SnapshotBackgroundService>();

@@ -5,10 +5,6 @@ namespace BankLedger.Domain.Ports;
 
 public interface ITransactionRepository
 {
-    Task<Transaction?> GetByIdempotencyKeyAsync(
-        Guid idempotencyKey,
-        CancellationToken cancellationToken);
-
     Task<Money> GetBalanceDeltaAsync(
         string accountNumber,
         long lastTransactionId,

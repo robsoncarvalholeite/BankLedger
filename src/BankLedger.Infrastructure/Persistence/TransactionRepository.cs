@@ -4,6 +4,7 @@ using BankLedger.Domain.Entities;
 using BankLedger.Domain.Enums;
 using BankLedger.Domain.ValueObjects;
 using Microsoft.Data.Sqlite;
+using BankLedger.Domain.Exceptions;
 
 namespace BankLedger.Infrastructure.Persistence;
 
@@ -14,16 +15,6 @@ public sealed class TransactionRepository : ITransactionRepository
     public TransactionRepository(SqliteConnectionFactory connectionFactory)
     {
         _connectionFactory = connectionFactory;
-    }
-
-    public async Task<Transaction?> GetByIdempotencyKeyAsync(Guid idempotencyKey, CancellationToken cancellationToken)
-    {
-        using var connection = _connectionFactory.CreateConnection();
-        var row = await connection.QueryFirstOrDefaultAsync<TransactionRow>(
-            "SELECT Id, AccountNumber, AmountCents, Type, CreatedAt, IdempotencyKey FROM Transactions WHERE IdempotencyKey = @IdempotencyKey",
-            new { IdempotencyKey = idempotencyKey.ToString() });
-
-        return row?.ToDomain();
     }
 
     public async Task<Money> GetBalanceDeltaAsync(string accountNumber, long lastTransactionId, DateTime? until, CancellationToken cancellationToken)
@@ -69,8 +60,8 @@ public sealed class TransactionRepository : ITransactionRepository
                 dbTransaction);
 
             var id = await connection.ExecuteScalarAsync<long>(
-                @"INSERT INTO Transactions (AccountNumber, AmountCents, Type, CreatedAt, IdempotencyKey)
-                  VALUES (@AccountNumber, @AmountCents, @Type, @CreatedAt, @IdempotencyKey);
+                @"INSERT INTO Transactions (AccountNumber, AmountCents, Type, CreatedAt, OccVersion)
+                  VALUES (@AccountNumber, @AmountCents, @Type, @CreatedAt, @OccVersion);
                   SELECT last_insert_rowid();",
                 new
                 {
@@ -78,7 +69,7 @@ public sealed class TransactionRepository : ITransactionRepository
                     AmountCents = (long)(transaction.Amount.Amount * 100),
                     Type = transaction.Type.ToString(),
                     CreatedAt = transaction.CreatedAt.ToString("o"),
-                    IdempotencyKey = transaction.IdempotencyKey.ToString()
+                    OccVersion = transaction.OccVersion
                 },
                 dbTransaction);
 
@@ -88,29 +79,14 @@ public sealed class TransactionRepository : ITransactionRepository
                 transaction.Amount,
                 transaction.Type,
                 transaction.CreatedAt,
-                transaction.IdempotencyKey);
+                transaction.OccVersion);
             dbTransaction.Commit();
             return restored;
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19) // UNIQUE constraint violation
         {
             dbTransaction.Rollback();
-            var existing = await GetByIdempotencyKeyAsync(transaction.IdempotencyKey, cancellationToken);
-            return existing!;
-        }
-    }
-
-    private sealed record TransactionRow(long Id, string AccountNumber, long AmountCents, string Type, string CreatedAt, string IdempotencyKey)
-    {
-        public Transaction ToDomain()
-        {
-            return Transaction.Restore(
-                Id,
-                AccountNumber,
-                new Money(AmountCents / 100m),
-                Enum.Parse<TransactionType>(Type),
-                DateTime.Parse(CreatedAt),
-                Guid.Parse(IdempotencyKey));
+            throw new ConcurrencyException($"Transaction with occ-version {transaction.OccVersion} in conflict.");
         }
     }
 

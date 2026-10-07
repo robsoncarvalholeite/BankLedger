@@ -15,6 +15,12 @@ public sealed record Money
     public static Money operator -(Money left, Money right)
         => new(left.Amount - right.Amount);
 
+    public static bool operator <(Money left, Money right)
+        => left.Amount < right.Amount;
+
+    public static bool operator >(Money left, Money right)
+        => left.Amount > right.Amount;
+
     // Banker's Rounding Rule: Round to the nearest even number when the value is exactly halfway between two numbers.
     private static decimal Round(decimal value)
         => Math.Round(value, 2, MidpointRounding.ToEven);

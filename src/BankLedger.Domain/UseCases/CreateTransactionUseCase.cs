@@ -9,37 +9,53 @@ namespace BankLedger.Domain.UseCases;
 public sealed class CreateTransactionUseCase
 {
     private readonly ITransactionRepository _transactionRepository;
+    private readonly IdempotencyLock _idempotencyLock;
+    private readonly GetBalanceUseCase _getBalanceUseCase;
+    private readonly IConcurrencyStore _concurrencyStore;
 
-    public CreateTransactionUseCase(ITransactionRepository transactionRepository)
+    public CreateTransactionUseCase(ITransactionRepository transactionRepository, IdempotencyLock idempotencyLock, GetBalanceUseCase getBalanceUseCase, IConcurrencyStore concurrencyStore)
     {
         _transactionRepository = transactionRepository;
+        _idempotencyLock = idempotencyLock;
+        _getBalanceUseCase = getBalanceUseCase;
+        _concurrencyStore = concurrencyStore;
     }
 
-    public async Task<Transaction> ExecuteAsync(
+    public async Task ExecuteAsync(
         string accountNumber,
         Money amount,
         TransactionType type,
         Guid idempotencyKey,
         CancellationToken ct)
     {
-        var existingTransaction = await _transactionRepository.GetByIdempotencyKeyAsync(idempotencyKey, ct);
-        if (existingTransaction is not null)
+        const int MAX_ATTEMPTS = 5;
+
+        if (await _idempotencyLock.ExistsAsync(idempotencyKey, ct)) return;
+
+        if (TransactionType.DEBIT == type)
         {
-            return existingTransaction;
+            var currentBalance = await _getBalanceUseCase.ExecuteAsync(accountNumber, null, ct);
+            if (currentBalance < amount) throw new InsufficientBalanceException(accountNumber, amount.Amount, currentBalance.Amount);
         }
 
-        var currentBalance = await _transactionRepository.GetBalanceDeltaAsync(accountNumber, 0, null, ct);
-
-        if (type == TransactionType.DEBIT)
+        var attempt = 0;
+        do
         {
-            var newBalance = currentBalance - amount;
-            if (newBalance.Amount < 0)
+            try
             {
-                throw new InsufficientBalanceException(accountNumber, amount.Amount, currentBalance.Amount);
-            }
-        }
+                long newOccVersion = await _concurrencyStore.NextAsync(accountNumber, ct);
 
-        var transaction = new Transaction(accountNumber, amount, type, idempotencyKey);
-        return await _transactionRepository.CreateAsync(transaction, ct);
+                var transaction = new Transaction(accountNumber, amount, type, newOccVersion);
+                await _transactionRepository.CreateAsync(transaction, ct);
+
+                await _idempotencyLock.AddAsync(idempotencyKey, ct);
+                return;
+            }
+            catch (ConcurrencyException){}
+
+        } while (attempt++ < MAX_ATTEMPTS);
+
+        throw new ConcurrencyException($"Failed to create transaction after {MAX_ATTEMPTS} attempts due to concurrency conflicts.");
+
     }
 }

@@ -44,7 +44,7 @@ public sealed class TransactionsController : ControllerBase
 
         try
         {
-            var transaction = await _createTransactionUseCase.ExecuteAsync(
+            await _createTransactionUseCase.ExecuteAsync(
                 accountNumber,
                 new Money(request.Amount),
                 request.Type,
