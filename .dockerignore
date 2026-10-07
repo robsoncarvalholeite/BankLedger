@@ -1,0 +1,15 @@
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+README.md
+docs/
+TestResults/
+**/bin/
+**/obj/
+**/*.db
+.vscode/
+.idea/
+*.md
+!Directory.Build.props
