@@ -45,7 +45,12 @@ public sealed class TransactionRepository : ITransactionRepository
         foreach (var row in rows)
         {
             var amount = new Money(row.AmountCents / 100m);
-            balance = row.Type == "CREDIT" ? balance + amount : balance - amount;
+            balance = row.Type switch
+            {
+                "CREDIT" => balance + amount,
+                "DEBIT" => balance - amount,
+                _ => throw new InvalidOperationException($"Unknown transaction type: {row.Type}")
+            };
         }
 
         return balance;
