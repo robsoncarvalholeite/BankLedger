@@ -6,6 +6,7 @@ using BankLedger.Api.Middleware;
 using BankLedger.Api.Filters;
 using Microsoft.Data.Sqlite;
 using System.Text.Json.Serialization;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,7 +20,21 @@ builder.Services.AddControllers(options =>
 });
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Authorization", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.ApiKey,
+        In = ParameterLocation.Header,
+        Description = "Token = Numero da Conta."
+    });
+
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("Authorization", document)] = []
+    });
+});
 
 var connectionString = builder.Configuration.GetConnectionString("Default") ?? "Data Source=bank.db";
 
