@@ -21,7 +21,7 @@ API REST para registro de transações financeiras (créditos/débitos) e consul
 | Web Framework | ASP.NET Core 10 |
 | ORM/Data Access | Dapper |
 | Database | SQLite (dev)|
-| Testes | xUnit, Moq |
+| Testes | xUnit |
 | Documentação | Swagger/OpenAPI |
 | Containerização | Docker, Docker Compose |
 
@@ -246,8 +246,7 @@ Para mais detalhes de até onde poderíamos chegar com prazo, equipe e orçament
 ```
 .
 ├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── CONCURRENCY.md
+│   ├── REQUIREMENTS.md
 │   ├── API.md
 │   └── ROADMAP.md
 ├── src/
@@ -263,6 +262,6 @@ Para mais detalhes de até onde poderíamos chegar com prazo, equipe e orçament
 ├── docker-compose.yml
 ├── .gitignore
 ├── Directory.Build.props
-├── BankLedger.sln
+├── BankLedger.slnx
 └── README.md
 ```

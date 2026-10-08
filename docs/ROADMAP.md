@@ -50,14 +50,13 @@
 
 - **Prática**: tokens assinados emitidos por um IdP, *scopes*, rotação de chaves, mTLS entre serviços, certificados ICP-Brasil onde exigido; segurança de APIs conforme Res. CMN 5.274/2025 e Res. BCB 538/2025.
 - **Por que não agora**: premissa explícita de token simbólico (número da conta) para focar no ledger.
-- **O que fizemos no lugar**: middleware único de autenticação/autorização com `Authorization: Bearer`, rotas isentas listadas, `403` para conta diferente, número mascarado em logs. A troca por JWT afeta apenas o middleware e o `OpenAPI.
+- **O que fizemos no lugar**: middleware único de autenticação/autorização com `Authorization:`.
 - **Gatilho**: qualquer exposição além de ambiente local.
 
 ## 7. TLS, rate limiting, WAF e hardening de rede
 
 - **Prática**: Implementação de um APIGateway com HTTPS obrigatório com HSTS, *rate limiting* por token/IP, WAF, segregação de rede, gestão de certificados (Res. CMN 5.274/2025).
 - **Por que não agora**: em POC local o TLS é terminado por proxy/ingress; rate limiting sem identidade real protege pouco.
-- **O que fizemos no lugar**: apenas porta 8080 exposta, `ProblemDetails` sem stack trace fora de Development.
 - **Gatilho**: Segurança com deploy em ambiente cloud com Kubernets, Ingress e etc.
 
 ## 8. Observabilidade completa (OpenTelemetry, métricas, tracing distribuído, Serilog/Seq)
