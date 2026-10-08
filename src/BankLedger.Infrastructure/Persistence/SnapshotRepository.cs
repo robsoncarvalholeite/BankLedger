@@ -39,15 +39,20 @@ public sealed class SnapshotRepository : ISnapshotRepository
         using var connection = _connectionFactory.CreateConnection();
         var accountIds = await connection.QueryAsync<string>(
             @"
-            SELECT DISTINCT t.account_id
-            FROM transactions t
-            WHERE t.id > (
-                SELECT bs.last_transaction_id
-                FROM balance_snapshots bs
-                WHERE bs.account_id = t.account_id
-                ORDER BY bs.occ_version DESC
-                LIMIT 1
-            )");
+            SELECT a.id
+            FROM accounts a,
+                transactions t
+            LEFT JOIN
+            (SELECT bs.account_id,
+                    max(bs.last_transaction_id) AS last_transaction_id
+            FROM balance_snapshots bs
+            GROUP BY bs.account_id) AS ls ON a.id = ls.account_id
+            WHERE t.account_id = a.id
+            AND (t.id > ls.last_transaction_id
+                OR ls.last_transaction_id IS NULL)
+            GROUP BY a.id
+            LIMIT 50
+        ");
 
         return accountIds.Select(Guid.Parse).ToList();
     }
