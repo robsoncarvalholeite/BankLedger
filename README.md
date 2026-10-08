@@ -58,7 +58,7 @@ API disponível em `http://localhost:8080`
 ### Local (sem Docker)
 ```bash
 dotnet restore
-dotnet build --configuration Release
+dotnet build
 dotnet run --project src/BankLedger.Api
 ```
 API em `http://localhost:5091` (porta aleatória) ou conforme `launchSettings.json`
@@ -96,6 +96,9 @@ Authorization: 123456
 ### Endpoints
 
 #### Cria transação (crédito ou débito). Requer idempotência.
+
+**⚠️ NOTA:** Ao criar uma nova transação, caso a conta não exista, ela será crianda automaticamente (auxilia nos testes manuais)
+
 ```
 POST /transactions
 ```
@@ -200,9 +203,8 @@ curl -X POST http://localhost:8080/transactions \
 
 ---
 
-## Documentação
+## Documentos Complementares
 
-- [Arquitetura](docs/ARCHITECTURE.md) - Hexagonal, domínio, infra, trade-offs
 - [API Reference](docs/API.md) - Endpoints, headers, códigos, exemplos
 - [Roadmap](docs/ROADMAP.md) - Próximos passos e decisões de arquitetura com mais detalhes
 
