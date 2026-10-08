@@ -13,10 +13,11 @@ namespace BankLedger.Infrastructure.Jobs;
 
 public sealed class SnapshotBackgroundService : BackgroundService
 {
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly SqliteConnectionFactory _connectionFactory;
     private readonly ILogger<SnapshotBackgroundService> _logger;
     private readonly TimeSpan _interval;
+
+    private readonly ITransactionRepository _transactionRepository;
+    private readonly ISnapshotRepository _snapshotRepository;
 
     public SnapshotBackgroundService(
         IServiceScopeFactory scopeFactory,
@@ -24,9 +25,11 @@ public sealed class SnapshotBackgroundService : BackgroundService
         ILogger<SnapshotBackgroundService> logger,
         IConfiguration configuration)
     {
-        _scopeFactory = scopeFactory;
-        _connectionFactory = connectionFactory;
         _logger = logger;
+
+        using var scope = scopeFactory.CreateScope();
+        _transactionRepository = scope.ServiceProvider.GetRequiredService<ITransactionRepository>();
+        _snapshotRepository = scope.ServiceProvider.GetRequiredService<ISnapshotRepository>();
 
         var intervalMinutes = configuration.GetValue<int>("SNAPSHOT_INTERVAL_MINUTES", 5);
         _interval = TimeSpan.FromMinutes(intervalMinutes);
@@ -51,22 +54,22 @@ public sealed class SnapshotBackgroundService : BackgroundService
         }
     }
 
-    private async Task ProcessSnapshotsAsync(CancellationToken cancellationToken)
+    private async Task ProcessSnapshotsAsync(CancellationToken ct)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var transactionRepository = scope.ServiceProvider.GetRequiredService<ITransactionRepository>();
-        var snapshotRepository = scope.ServiceProvider.GetRequiredService<ISnapshotRepository>();
 
-        var accountIds = await snapshotRepository.GetAccountsWithNewTransactionsAsync(cancellationToken);
+
+        var accountIds = await _snapshotRepository.GetAccountsWithNewTransactionsAsync(ct);
+
+        Console.WriteLine($"Found {accountIds.Count} accounts with new transactions.");
 
         foreach (var accountId in accountIds)
         {
-            if (cancellationToken.IsCancellationRequested)
+            if (ct.IsCancellationRequested)
                 break;
 
             try
             {
-                await CreateSnapshotForAccountAsync(accountId, transactionRepository, snapshotRepository, cancellationToken);
+                await CreateSnapshotForAccountAsync(accountId, ct);
             }
             catch (Exception ex)
             {
@@ -77,40 +80,23 @@ public sealed class SnapshotBackgroundService : BackgroundService
 
     private async Task CreateSnapshotForAccountAsync(
         Guid accountId,
-        ITransactionRepository transactionRepository,
-        ISnapshotRepository snapshotRepository,
-        CancellationToken cancellationToken)
+        CancellationToken ct)
     {
-        var snapshot = await snapshotRepository.GetAsync(accountId, cancellationToken);
+        var snapshot = await _snapshotRepository.GetLastAsync(accountId, ct);
 
-        var lastTransactionId = snapshot?.LastTransactionId ?? Guid.Empty;
+        var transactionId = snapshot?.LastTransactionId ?? Guid.Empty;
         var balance = snapshot?.Balance ?? new Money(0);
         var lastOccVersion = snapshot?.OccVersion ?? 0;
 
-        var delta = await transactionRepository.GetBalanceDeltaAsync(accountId, lastTransactionId, null, cancellationToken);
+        var (delta, lastTransactionId) = await _transactionRepository.GetBalanceDeltaAsync(accountId, transactionId, null, ct);
         var newBalance = balance + delta;
-
-        var latestTransactionId = await GetLatestTransactionIdAsync(accountId, cancellationToken);
-        if (latestTransactionId == Guid.Empty)
-            return;
 
         var newOccVersion = lastOccVersion + 1;
 
-        var newSnapshot = new BalanceSnapshot(accountId, newBalance, latestTransactionId, newOccVersion);
+        var newSnapshot = new BalanceSnapshot(accountId, newBalance, lastTransactionId, newOccVersion);
 
-        await snapshotRepository.CreateAsync(newSnapshot, cancellationToken);
+        await _snapshotRepository.CreateAsync(newSnapshot, ct);
 
         _logger.LogInformation("Created snapshot for account {AccountId} with occ_version {OccVersion}", accountId, newOccVersion);
-    }
-
-    private async Task<Guid> GetLatestTransactionIdAsync(Guid accountId, CancellationToken cancellationToken)
-    {
-        using var connection = _connectionFactory.CreateConnection();
-
-        var result = await connection.ExecuteScalarAsync<string>(
-            "SELECT id FROM transactions WHERE account_id = @AccountId ORDER BY created_at DESC LIMIT 1",
-            new { AccountId = accountId.ToString() });
-
-        return result != null ? Guid.Parse(result) : Guid.Empty;
     }
 }

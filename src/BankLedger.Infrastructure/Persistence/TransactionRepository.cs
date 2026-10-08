@@ -11,12 +11,7 @@ namespace BankLedger.Infrastructure.Persistence;
 public sealed class TransactionRepository : ITransactionRepository
 {
     private readonly SqliteConnectionFactory _connectionFactory;
-    private static readonly Dictionary<char, TransactionType> _typeMap = new()
-    {
-        ['C'] = TransactionType.CREDIT,
-        ['D'] = TransactionType.DEBIT
-    };
-    private static readonly Dictionary<TransactionType, char> _typeMapReverse = new()
+    private static readonly Dictionary<TransactionType, char> _typeMap = new()
     {
         [TransactionType.CREDIT] = 'C',
         [TransactionType.DEBIT] = 'D'
@@ -27,23 +22,24 @@ public sealed class TransactionRepository : ITransactionRepository
         _connectionFactory = connectionFactory;
     }
 
-    public async Task<Money> GetBalanceDeltaAsync(Guid accountId, Guid lastTransactionId, DateTime? until, CancellationToken cancellationToken)
+    public async Task<(Money balance, Guid lastTransactionId)> GetBalanceDeltaAsync(Guid accountId, Guid transactionId, DateTime? until, CancellationToken cancellationToken)
     {
         using var connection = _connectionFactory.CreateConnection();
 
         var sql = """
-            SELECT 
+            SELECT
+                t.id as Id,
                 t.amount_in_cents as AmountCents,
                 t.type as Type
             FROM transactions t
             WHERE t.account_id = @AccountId
-              AND t.id > @LastTransactionId
+              AND t.id > @TransactionId
             """;
 
         object parameters = new
         {
             AccountId = accountId.ToString(),
-            LastTransactionId = lastTransactionId.ToString()
+            TransactionId = transactionId.ToString()
         };
 
         if (until.HasValue)
@@ -52,7 +48,7 @@ public sealed class TransactionRepository : ITransactionRepository
             parameters = new
             {
                 AccountId = accountId.ToString(),
-                LastTransactionId = lastTransactionId.ToString(),
+                TransactionId = transactionId.ToString(),
                 Until = until.Value.ToString("o")
             };
         }
@@ -63,7 +59,8 @@ public sealed class TransactionRepository : ITransactionRepository
         foreach (var row in rows)
         {
             var amount = new Money(row.AmountCents / 100m);
-            var type = _typeMap.GetValueOrDefault(row.Type[0], throwInvalidType(row.Type));
+
+            var type = _typeMap.ToDictionary(x => x.Value, x => x.Key)[row.Type[0]];
             balance = type switch
             {
                 TransactionType.CREDIT => balance + amount,
@@ -71,8 +68,9 @@ public sealed class TransactionRepository : ITransactionRepository
                 _ => throw new InvalidOperationException($"Unknown transaction type: {row.Type}")
             };
         }
+        var lastTransactionId = Guid.Parse(rows.MaxBy(r => r.Id)?.Id ?? Guid.Empty.ToString());
 
-        return balance;
+        return (balance, lastTransactionId);
     }
 
     public async Task<Transaction> CreateAsync(Transaction transaction, CancellationToken cancellationToken)
@@ -84,14 +82,10 @@ public sealed class TransactionRepository : ITransactionRepository
         {
             var accountIdStr = transaction.AccountId.ToString();
 
-            await connection.ExecuteAsync(
-                "INSERT OR IGNORE INTO accounts (id, number) VALUES (@AccountId, @AccountNumber)",
-                new { AccountId = accountIdStr, AccountNumber = accountIdStr },
-                dbTransaction);
-
             var id = transaction.Id == Guid.Empty ? Guid.CreateVersion7() : transaction.Id;
             var idStr = id.ToString();
-            var typeChar = _typeMapReverse[transaction.Type];
+
+            var typeChar = _typeMap[transaction.Type];
 
             await connection.ExecuteAsync(
                 @"INSERT INTO transactions (id, account_id, amount_in_cents, type, created_at, occ_version)
@@ -124,8 +118,5 @@ public sealed class TransactionRepository : ITransactionRepository
         }
     }
 
-    private static TransactionType throwInvalidType(string type)
-        => throw new InvalidOperationException($"Unknown transaction type: {type}");
-
-    private sealed record BalanceDeltaRow(long AmountCents, string Type);
+    private sealed record BalanceDeltaRow(string Id, long AmountCents, string Type);
 }

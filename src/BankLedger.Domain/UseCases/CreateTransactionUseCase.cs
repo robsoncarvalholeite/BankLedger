@@ -33,8 +33,9 @@ public sealed class CreateTransactionUseCase
         if (TransactionType.DEBIT == type)
         {
             var currentBalance = await _getBalanceUseCase.ExecuteAsync(accountId, null, ct);
-            if (currentBalance < amount) throw new InsufficientBalanceException(accountId.ToString(), amount.Amount, currentBalance.Amount);
+            if (currentBalance < amount) throw new InsufficientBalanceException(amount.Amount, currentBalance.Amount);
         }
+
 
         var retries = 5;
         do

@@ -1,19 +1,21 @@
-using BankLedger.Infrastructure.Persistence;
+using BankLedger.Domain.Ports;
+using BankLedger.Domain.Entities;
 using Dapper;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BankLedger.Api.Middleware;
 
 public sealed class AccountAuthorizationMiddleware
 {
     private readonly RequestDelegate _next;
-    private readonly SqliteConnectionFactory _connectionFactory;
+    private readonly IServiceScopeFactory _scopeFactory;
     private const string AuthorizationHeaderName = "Authorization";
 
-    public AccountAuthorizationMiddleware(RequestDelegate next, SqliteConnectionFactory connectionFactory)
+    public AccountAuthorizationMiddleware(RequestDelegate next, IServiceScopeFactory scopeFactory)
     {
         _next = next;
-        _connectionFactory = connectionFactory;
+        _scopeFactory = scopeFactory;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -34,22 +36,19 @@ public sealed class AccountAuthorizationMiddleware
             return;
         }
 
-        using var connection = _connectionFactory.CreateConnection();
-        var accountIdObj = await connection.ExecuteScalarAsync<string>(
-            "SELECT id FROM accounts WHERE number = @Number",
-            new { Number = accountNumber });
+        using var scope = _scopeFactory.CreateScope();
+        var accountRepository = scope.ServiceProvider.GetRequiredService<IAccountRepository>();
 
-        if (accountIdObj == null)
+        var account = await accountRepository.GetByNumberAsync(accountNumber, context.RequestAborted);
+
+        if (account == null)
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            await context.Response.WriteAsync("Account not found");
-            return;
+            account = Account.Create(accountNumber);
+            await accountRepository.CreateAsync(account, context.RequestAborted);
         }
 
-        var accountId = Guid.Parse(accountIdObj);
-
-        context.Items["AccountNumber"] = accountNumber;
-        context.Items["AccountId"] = accountId;
+        context.Items["AccountNumber"] = account.Number;
+        context.Items["AccountId"] = account.Id;
 
         await _next(context);
     }

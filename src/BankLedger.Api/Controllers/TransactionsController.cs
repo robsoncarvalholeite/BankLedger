@@ -28,7 +28,7 @@ public sealed class TransactionsController : ControllerBase
     public async Task<IActionResult> Create(
         [FromBody] CreateTransactionRequest request,
         [FromHeader(Name = "Idempotency-Key")] Guid idempotencyKey,
-        CancellationToken cancellationToken)
+        CancellationToken ct)
     {
         var accountId = HttpContext.Items["AccountId"] as Guid?;
 
@@ -49,7 +49,7 @@ public sealed class TransactionsController : ControllerBase
                 new Money(request.Amount),
                 request.Type,
                 idempotencyKey,
-                cancellationToken);
+                ct);
 
             return Created("", null);
         }

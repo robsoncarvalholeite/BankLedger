@@ -24,11 +24,12 @@ public static class DatabaseInitializer
             );
 
             CREATE TABLE IF NOT EXISTS balance_snapshots (
-                account_id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
                 balance_in_cents INTEGER NOT NULL,
                 last_transaction_id TEXT NOT NULL,
                 occ_version INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
+                PRIMARY KEY (account_id, occ_version),
                 FOREIGN KEY (account_id) REFERENCES accounts(id),
                 FOREIGN KEY (last_transaction_id) REFERENCES transactions(id)
             );

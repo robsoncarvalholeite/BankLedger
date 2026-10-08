@@ -4,7 +4,7 @@ namespace BankLedger.Domain.Ports;
 
 public interface ISnapshotRepository
 {
-    Task<BalanceSnapshot?> GetAsync(
+    Task<BalanceSnapshot?> GetLastAsync(
         Guid accountId,
         CancellationToken cancellationToken);
 

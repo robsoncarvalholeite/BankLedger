@@ -22,11 +22,11 @@ public sealed class GetBalanceUseCase
         Guid? lastTransactionId,
         CancellationToken ct)
     {
-        var snapshot = await _snapshotRepository.GetAsync(accountId, ct);
+        var snapshot = await _snapshotRepository.GetLastAsync(accountId, ct);
 
         var fromTxnId = lastTransactionId ?? snapshot?.LastTransactionId ?? Guid.Empty;
 
-        var delta = await _transactionRepository.GetBalanceDeltaAsync(
+        var (delta, _) = await _transactionRepository.GetBalanceDeltaAsync(
             accountId,
             fromTxnId,
             null,

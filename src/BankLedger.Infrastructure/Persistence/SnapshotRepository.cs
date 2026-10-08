@@ -15,7 +15,7 @@ public sealed class SnapshotRepository : ISnapshotRepository
         _connectionFactory = connectionFactory;
     }
 
-    public async Task<BalanceSnapshot?> GetAsync(Guid accountId, CancellationToken cancellationToken)
+    public async Task<BalanceSnapshot?> GetLastAsync(Guid accountId, CancellationToken ct)
     {
         using var connection = _connectionFactory.CreateConnection();
         var row = await connection.QueryFirstOrDefaultAsync<SnapshotRow>(
@@ -25,26 +25,34 @@ public sealed class SnapshotRepository : ISnapshotRepository
                 last_transaction_id as LastTransactionId,
                 occ_version as OccVersion,
                 created_at as CreatedAt
-              FROM balance_snapshots 
-              WHERE account_id = @AccountId",
+            FROM balance_snapshots
+            WHERE account_id = @AccountId
+            ORDER BY occ_version DESC
+            LIMIT 1",
             new { AccountId = accountId.ToString() });
 
         return row?.ToDomain();
     }
 
-    public async Task<IReadOnlyList<Guid>> GetAccountsWithNewTransactionsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<Guid>> GetAccountsWithNewTransactionsAsync(CancellationToken ct)
     {
         using var connection = _connectionFactory.CreateConnection();
         var accountIds = await connection.QueryAsync<string>(
-            @"SELECT DISTINCT t.account_id
-              FROM transactions t
-              LEFT JOIN balance_snapshots s ON t.account_id = s.account_id
-              WHERE s.account_id IS NULL OR t.id > s.last_transaction_id");
+            @"
+            SELECT DISTINCT t.account_id
+            FROM transactions t
+            WHERE t.id > (
+                SELECT bs.last_transaction_id
+                FROM balance_snapshots bs
+                WHERE bs.account_id = t.account_id
+                ORDER BY bs.occ_version DESC
+                LIMIT 1
+            )");
 
         return accountIds.Select(Guid.Parse).ToList();
     }
 
-    public async Task<BalanceSnapshot> CreateAsync(BalanceSnapshot snapshot, CancellationToken cancellationToken)
+    public async Task<BalanceSnapshot> CreateAsync(BalanceSnapshot snapshot, CancellationToken ct)
     {
         using var connection = _connectionFactory.CreateConnection();
 
