@@ -60,7 +60,7 @@ public sealed class SnapshotBackgroundService : BackgroundService
 
         var accountIds = await _snapshotRepository.GetAccountsWithNewTransactionsAsync(ct);
 
-        Console.WriteLine($"Found {accountIds.Count} accounts with new transactions.");
+        _logger.LogInformation($"Found {accountIds.Count} accounts with new transactions.");
 
         foreach (var accountId in accountIds)
         {
