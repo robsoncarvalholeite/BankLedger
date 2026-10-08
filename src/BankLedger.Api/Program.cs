@@ -47,8 +47,8 @@ builder.Services.AddSingleton<SqliteConnectionFactory>(_ => new SqliteConnection
 builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
 builder.Services.AddScoped<ISnapshotRepository, SnapshotRepository>();
 builder.Services.AddScoped<IAccountRepository, AccountRepository>();
-builder.Services.AddScoped<IdempotencyLock, InMemoryIdempotencyLock>();
-builder.Services.AddScoped<IConcurrencyStore, InMemoryConcurrencyStore>();
+builder.Services.AddSingleton<IdempotencyLock, InMemoryIdempotencyLock>();
+builder.Services.AddSingleton<IConcurrencyStore, InMemoryConcurrencyStore>();
 builder.Services.AddScoped<CreateTransactionUseCase>();
 builder.Services.AddScoped<GetBalanceUseCase>();
 builder.Services.AddHostedService<SnapshotBackgroundService>();
