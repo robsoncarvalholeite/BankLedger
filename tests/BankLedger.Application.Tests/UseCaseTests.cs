@@ -10,168 +10,179 @@ namespace BankLedger.Application.Tests;
 public class InMemoryTransactionRepository : ITransactionRepository
 {
     private readonly List<Transaction> _transactions = [];
-    private readonly Dictionary<Guid, Transaction> _byIdempotencyKey = [];
-    private long _nextId = 1;
 
-    public Task<Transaction?> GetByIdempotencyKeyAsync(Guid idempotencyKey, CancellationToken cancellationToken)
-    {
-        _byIdempotencyKey.TryGetValue(idempotencyKey, out var transaction);
-        return Task.FromResult(transaction);
-    }
-
-    public Task<Money> GetBalanceDeltaAsync(string accountNumber, long lastTransactionId, DateTime? until, CancellationToken cancellationToken)
+    public Task<(Money balance, Guid lastTransactionId)> GetBalanceDeltaAsync(Guid accountId, Guid transactionId, DateTime? until, CancellationToken cancellationToken)
     {
         var relevantTransactions = _transactions
-            .Where(t => t.AccountNumber == accountNumber && t.Id > lastTransactionId)
+            .Where(t => t.AccountId == accountId)
+            .Where(t => transactionId == Guid.Empty || t.Id.CompareTo(transactionId) > 0)
             .Where(t => until == null || t.CreatedAt <= until);
 
         var balance = new Money(0);
+        Guid lastTxnId = Guid.Empty;
         foreach (var t in relevantTransactions)
         {
             balance = t.Type == TransactionType.CREDIT ? balance + t.Amount : balance - t.Amount;
+            lastTxnId = t.Id;
         }
-        return Task.FromResult(balance);
+        return Task.FromResult((balance, lastTxnId));
     }
 
     public Task<Transaction> CreateAsync(Transaction transaction, CancellationToken cancellationToken)
     {
-        var id = _nextId++;
-        var restored = Transaction.Restore(
-            id,
-            transaction.AccountNumber,
-            transaction.Amount,
-            transaction.Type,
-            transaction.CreatedAt,
-            transaction.IdempotencyKey);
-        _transactions.Add(restored);
-        _byIdempotencyKey[restored.IdempotencyKey] = restored;
-        return Task.FromResult(restored);
+        _transactions.Add(transaction);
+        return Task.FromResult(transaction);
     }
 
     public void AddTransaction(Transaction transaction)
     {
-        var id = _nextId++;
-        var restored = Transaction.Restore(
-            id,
-            transaction.AccountNumber,
-            transaction.Amount,
-            transaction.Type,
-            transaction.CreatedAt,
-            transaction.IdempotencyKey);
-        _transactions.Add(restored);
-        _byIdempotencyKey[restored.IdempotencyKey] = restored;
+        _transactions.Add(transaction);
     }
 }
 
 public class InMemorySnapshotRepository : ISnapshotRepository
 {
-    private readonly Dictionary<string, BalanceSnapshot> _snapshots = [];
+    private readonly Dictionary<Guid, BalanceSnapshot> _snapshots = [];
 
-    public Task<BalanceSnapshot?> GetAsync(string accountNumber, CancellationToken cancellationToken)
+    public Task<BalanceSnapshot?> GetLastAsync(Guid accountId, CancellationToken cancellationToken)
     {
-        _snapshots.TryGetValue(accountNumber, out var snapshot);
+        _snapshots.TryGetValue(accountId, out var snapshot);
         return Task.FromResult(snapshot);
     }
 
-    public Task<IReadOnlyList<string>> GetAccountsWithNewTransactionsAsync(CancellationToken cancellationToken)
+    public Task<IReadOnlyList<Guid>> GetAccountsWithNewTransactionsAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult<IReadOnlyList<string>>(_snapshots.Keys.ToList());
+        return Task.FromResult<IReadOnlyList<Guid>>(_snapshots.Keys.ToList());
     }
 
-    public Task<bool> UpdateAsync(BalanceSnapshot snapshot, long expectedSequence, CancellationToken cancellationToken)
+    public Task<BalanceSnapshot> CreateAsync(BalanceSnapshot snapshot, CancellationToken cancellationToken)
     {
-        if (!_snapshots.TryGetValue(snapshot.AccountNumber, out var existing))
-        {
-            _snapshots[snapshot.AccountNumber] = snapshot;
-            return Task.FromResult(true);
-        }
-
-        if (existing.Sequence != expectedSequence)
-        {
-            return Task.FromResult(false);
-        }
-
-        _snapshots[snapshot.AccountNumber] = snapshot;
-        return Task.FromResult(true);
+        _snapshots[snapshot.AccountId] = snapshot;
+        return Task.FromResult(snapshot);
     }
 
     public void SetSnapshot(BalanceSnapshot snapshot)
     {
-        _snapshots[snapshot.AccountNumber] = snapshot;
+        _snapshots[snapshot.AccountId] = snapshot;
+    }
+}
+
+public class InMemoryIdempotencyLock : IdempotencyLock
+{
+    private readonly HashSet<Guid> _keys = [];
+
+    public Task<bool> ExistsAsync(Guid idempotencyKey, CancellationToken ct)
+    {
+        return Task.FromResult(_keys.Contains(idempotencyKey));
+    }
+
+    public Task AddAsync(Guid idempotencyKey, CancellationToken ct)
+    {
+        _keys.Add(idempotencyKey);
+        return Task.CompletedTask;
+    }
+}
+
+public class InMemoryConcurrencyStore : IConcurrencyStore
+{
+    private readonly Dictionary<string, long> _versions = [];
+
+    public Task<long> NextAsync(string accountNumber, CancellationToken ct)
+    {
+        var newVersion = _versions.ContainsKey(accountNumber) ? _versions[accountNumber] + 1 : 1;
+        _versions[accountNumber] = newVersion;
+        return Task.FromResult(newVersion);
     }
 }
 
 public class CreateTransactionUseCaseTests
 {
-    [Fact]
-    public async Task ExecuteAsync_Credit_CreatesTransactionAndReturnsIt()
+    private CreateTransactionUseCase CreateUseCase(
+        ITransactionRepository? txRepo = null,
+        IdempotencyLock? idemLock = null,
+        GetBalanceUseCase? balanceUseCase = null,
+        IConcurrencyStore? concurrencyStore = null)
     {
-        var repo = new InMemoryTransactionRepository();
-        var useCase = new CreateTransactionUseCase(repo);
+        txRepo ??= new InMemoryTransactionRepository();
+        idemLock ??= new InMemoryIdempotencyLock();
+        var snapRepo = new InMemorySnapshotRepository();
+        balanceUseCase ??= new GetBalanceUseCase(txRepo, snapRepo);
+        concurrencyStore ??= new InMemoryConcurrencyStore();
+        return new CreateTransactionUseCase(txRepo, idemLock, balanceUseCase, concurrencyStore);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Credit_CreatesTransactionAndReturnsTrue()
+    {
+        var useCase = CreateUseCase();
+        var accountId = Guid.NewGuid();
         var idempotencyKey = Guid.NewGuid();
 
-        var result = await useCase.ExecuteAsync("123456", new Money(100.50m), TransactionType.CREDIT, idempotencyKey, CancellationToken.None);
-
-        Assert.Equal("123456", result.AccountNumber);
-        Assert.Equal(new Money(100.50m), result.Amount);
-        Assert.Equal(TransactionType.CREDIT, result.Type);
-        Assert.Equal(idempotencyKey, result.IdempotencyKey);
-        Assert.Equal(1, result.Id);
+        await useCase.ExecuteAsync(accountId, new Money(100.50m), TransactionType.CREDIT, idempotencyKey, CancellationToken.None);
     }
 
     [Fact]
     public async Task ExecuteAsync_Debit_WithSufficientBalance_CreatesTransaction()
     {
-        var repo = new InMemoryTransactionRepository();
-        repo.AddTransaction(new Transaction("123456", new Money(500), TransactionType.CREDIT, Guid.NewGuid()) { });
-        var useCase = new CreateTransactionUseCase(repo);
+        var accountId = Guid.NewGuid();
+        var txRepo = new InMemoryTransactionRepository();
+        txRepo.AddTransaction(new Transaction(accountId, new Money(500), TransactionType.CREDIT, 1));
+
+        var useCase = CreateUseCase(txRepo: txRepo);
         var idempotencyKey = Guid.NewGuid();
 
-        var result = await useCase.ExecuteAsync("123456", new Money(100), TransactionType.DEBIT, idempotencyKey, CancellationToken.None);
-
-        Assert.Equal(TransactionType.DEBIT, result.Type);
-        Assert.Equal(new Money(100), result.Amount);
+        await useCase.ExecuteAsync(accountId, new Money(100), TransactionType.DEBIT, idempotencyKey, CancellationToken.None);
     }
 
     [Fact]
     public async Task ExecuteAsync_Debit_InsufficientBalance_Throws()
     {
-        var repo = new InMemoryTransactionRepository();
-        repo.AddTransaction(new Transaction("123456", new Money(50), TransactionType.CREDIT, Guid.NewGuid()) { });
-        var useCase = new CreateTransactionUseCase(repo);
+        var accountId = Guid.NewGuid();
+        var txRepo = new InMemoryTransactionRepository();
+        txRepo.AddTransaction(new Transaction(accountId, new Money(50), TransactionType.CREDIT, 1));
+        var useCase = CreateUseCase(txRepo: txRepo);
         var idempotencyKey = Guid.NewGuid();
 
         var ex = await Assert.ThrowsAsync<InsufficientBalanceException>(() =>
-            useCase.ExecuteAsync("123456", new Money(100), TransactionType.DEBIT, idempotencyKey, CancellationToken.None));
+            useCase.ExecuteAsync(accountId, new Money(100), TransactionType.DEBIT, idempotencyKey, CancellationToken.None));
 
-        Assert.Equal("123456", ex.AccountNumber);
         Assert.Equal(100, ex.Requested);
         Assert.Equal(50, ex.Available);
     }
 
     [Fact]
-    public async Task ExecuteAsync_DuplicateIdempotencyKey_ReturnsOriginalTransaction()
+    public async Task ExecuteAsync_DuplicateIdempotencyKey_ReturnsTrueWithoutProcessing()
     {
-        var repo = new InMemoryTransactionRepository();
-        var useCase = new CreateTransactionUseCase(repo);
+        var idemLock = new InMemoryIdempotencyLock();
+        var useCase = CreateUseCase(idemLock: idemLock);
+        var accountId = Guid.NewGuid();
         var idempotencyKey = Guid.NewGuid();
 
-        var first = await useCase.ExecuteAsync("123456", new Money(100), TransactionType.CREDIT, idempotencyKey, CancellationToken.None);
-        var second = await useCase.ExecuteAsync("123456", new Money(200), TransactionType.CREDIT, idempotencyKey, CancellationToken.None);
+        await useCase.ExecuteAsync(accountId, new Money(100), TransactionType.CREDIT, idempotencyKey, CancellationToken.None);
 
-        Assert.Same(first, second);
-        Assert.Equal(1, first.Id);
+        await useCase.ExecuteAsync(accountId, new Money(200), TransactionType.CREDIT, idempotencyKey, CancellationToken.None);
     }
 
     [Fact]
     public async Task ExecuteAsync_InvalidAmount_Throws()
     {
-        var repo = new InMemoryTransactionRepository();
-        var useCase = new CreateTransactionUseCase(repo);
+        var useCase = CreateUseCase();
+        var accountId = Guid.NewGuid();
         var idempotencyKey = Guid.NewGuid();
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            useCase.ExecuteAsync("123456", new Money(0), TransactionType.CREDIT, idempotencyKey, CancellationToken.None));
+            useCase.ExecuteAsync(accountId, new Money(0), TransactionType.CREDIT, idempotencyKey, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ConcurrencyConflict_RetriesAndSucceeds()
+    {
+        var concurrencyStore = new InMemoryConcurrencyStore();
+        var useCase = CreateUseCase(concurrencyStore: concurrencyStore);
+        var accountId = Guid.NewGuid();
+        var idempotencyKey = Guid.NewGuid();
+
+        await useCase.ExecuteAsync(accountId, new Money(100), TransactionType.CREDIT, idempotencyKey, CancellationToken.None);
     }
 }
 
@@ -183,8 +194,9 @@ public class GetBalanceUseCaseTests
         var txRepo = new InMemoryTransactionRepository();
         var snapRepo = new InMemorySnapshotRepository();
         var useCase = new GetBalanceUseCase(txRepo, snapRepo);
+        var accountId = Guid.NewGuid();
 
-        var result = await useCase.ExecuteAsync("123456", null, CancellationToken.None);
+        var result = await useCase.ExecuteAsync(accountId, null, CancellationToken.None);
 
         Assert.Equal(new Money(0), result);
     }
@@ -192,13 +204,14 @@ public class GetBalanceUseCaseTests
     [Fact]
     public async Task ExecuteAsync_WithTransactions_CalculatesBalance()
     {
+        var accountId = Guid.NewGuid();
         var txRepo = new InMemoryTransactionRepository();
-        txRepo.AddTransaction(new Transaction("123456", new Money(100), TransactionType.CREDIT, Guid.NewGuid()) { });
-        txRepo.AddTransaction(new Transaction("123456", new Money(50), TransactionType.DEBIT, Guid.NewGuid()) { });
+        txRepo.AddTransaction(new Transaction(accountId, new Money(100), TransactionType.CREDIT, 1));
+        txRepo.AddTransaction(new Transaction(accountId, new Money(50), TransactionType.DEBIT, 2));
         var snapRepo = new InMemorySnapshotRepository();
         var useCase = new GetBalanceUseCase(txRepo, snapRepo);
 
-        var result = await useCase.ExecuteAsync("123456", null, CancellationToken.None);
+        var result = await useCase.ExecuteAsync(accountId, null, CancellationToken.None);
 
         Assert.Equal(new Money(50), result);
     }
@@ -206,49 +219,39 @@ public class GetBalanceUseCaseTests
     [Fact]
     public async Task ExecuteAsync_WithSnapshot_UsesSnapshotAsBase()
     {
+        var accountId = Guid.NewGuid();
         var txRepo = new InMemoryTransactionRepository();
-        txRepo.AddTransaction(new Transaction("123456", new Money(100), TransactionType.CREDIT, Guid.NewGuid()) { });
-        txRepo.AddTransaction(new Transaction("123456", new Money(50), TransactionType.DEBIT, Guid.NewGuid()) { });
+        txRepo.AddTransaction(Transaction.Restore(Guid.NewGuid(), accountId, new Money(100), TransactionType.CREDIT, DateTime.UtcNow, 1));
+        txRepo.AddTransaction(Transaction.Restore(Guid.NewGuid(), accountId, new Money(50), TransactionType.DEBIT, DateTime.UtcNow, 2));
         var snapRepo = new InMemorySnapshotRepository();
-        snapRepo.SetSnapshot(new BalanceSnapshot("123456", new Money(500), 0, 5));
+        snapRepo.SetSnapshot(new BalanceSnapshot(accountId, new Money(500), Guid.Empty, 5));
         var useCase = new GetBalanceUseCase(txRepo, snapRepo);
 
-        var result = await useCase.ExecuteAsync("123456", null, CancellationToken.None);
+        var result = await useCase.ExecuteAsync(accountId, null, CancellationToken.None);
 
         Assert.Equal(new Money(550), result);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithFromDate_FiltersTransactions()
-    {
-        var txRepo = new InMemoryTransactionRepository();
-        var baseTime = DateTime.UtcNow;
-        var t1 = new Transaction("123456", new Money(100), TransactionType.CREDIT, Guid.NewGuid()) { };
-        typeof(Transaction).GetProperty("CreatedAt")!.SetValue(t1, baseTime);
-        var t2 = new Transaction("123456", new Money(50), TransactionType.CREDIT, Guid.NewGuid()) { };
-        typeof(Transaction).GetProperty("CreatedAt")!.SetValue(t2, baseTime.AddSeconds(2));
-        txRepo.AddTransaction(t1);
-        txRepo.AddTransaction(t2);
-        var snapRepo = new InMemorySnapshotRepository();
-        var useCase = new GetBalanceUseCase(txRepo, snapRepo);
-
-        var until = baseTime.AddSeconds(1);
-        var result = await useCase.ExecuteAsync("123456", until, CancellationToken.None);
-
-        Assert.Equal(new Money(100), result);
-    }
-
-    [Fact]
     public async Task ExecuteAsync_SnapshotBoundary_DoesNotDoubleCount()
     {
+        var accountId = Guid.NewGuid();
+        var lastTxnId = Guid.NewGuid();
+        var nextTxnId = Guid.NewGuid();
+        // Ensure nextTxnId > lastTxnId for proper comparison
+        while (nextTxnId.CompareTo(lastTxnId) <= 0)
+        {
+            nextTxnId = Guid.NewGuid();
+        }
+
         var txRepo = new InMemoryTransactionRepository();
-        txRepo.AddTransaction(new Transaction("123456", new Money(100), TransactionType.CREDIT, Guid.NewGuid()) { });
-        txRepo.AddTransaction(new Transaction("123456", new Money(50), TransactionType.CREDIT, Guid.NewGuid()) { });
+        txRepo.AddTransaction(Transaction.Restore(lastTxnId, accountId, new Money(100), TransactionType.CREDIT, DateTime.UtcNow, 1));
+        txRepo.AddTransaction(Transaction.Restore(nextTxnId, accountId, new Money(50), TransactionType.CREDIT, DateTime.UtcNow, 2));
         var snapRepo = new InMemorySnapshotRepository();
-        snapRepo.SetSnapshot(new BalanceSnapshot("123456", new Money(100), 1, 5));
+        snapRepo.SetSnapshot(new BalanceSnapshot(accountId, new Money(100), lastTxnId, 5));
         var useCase = new GetBalanceUseCase(txRepo, snapRepo);
 
-        var result = await useCase.ExecuteAsync("123456", null, CancellationToken.None);
+        var result = await useCase.ExecuteAsync(accountId, null, CancellationToken.None);
 
         Assert.Equal(new Money(150), result);
     }

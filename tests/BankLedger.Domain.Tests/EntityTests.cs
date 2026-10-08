@@ -10,32 +10,31 @@ public class TransactionTests
     [Fact]
     public void Constructor_ValidParameters_CreatesTransaction()
     {
-        var idempotencyKey = Guid.NewGuid();
-        var transaction = new Transaction("123456", new Money(100.50m), TransactionType.CREDIT, idempotencyKey);
+        var accountId = Guid.NewGuid();
+        var transaction = new Transaction(accountId, new Money(100.50m), TransactionType.CREDIT, 1);
 
-        Assert.Equal("123456", transaction.AccountNumber);
+        Assert.Equal(accountId, transaction.AccountId);
         Assert.Equal(new Money(100.50m), transaction.Amount);
         Assert.Equal(TransactionType.CREDIT, transaction.Type);
-        Assert.Equal(idempotencyKey, transaction.IdempotencyKey);
+        Assert.Equal(1, transaction.OccVersion);
         Assert.True(transaction.CreatedAt <= DateTime.UtcNow);
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData(" ")]
-    public void Constructor_InvalidAccountNumber_Throws(string accountNumber)
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public void Constructor_EmptyGuid_Throws(string accountIdStr)
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new Transaction(accountNumber, new Money(100), TransactionType.CREDIT, Guid.NewGuid()));
+            new Transaction(Guid.Parse(accountIdStr), new Money(100), TransactionType.CREDIT, 1));
 
-        Assert.Contains("Account number is required", ex.Message);
+        Assert.Contains("Account ID is required", ex.Message);
     }
 
     [Fact]
     public void Constructor_ZeroAmount_Throws()
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new Transaction("123456", new Money(0), TransactionType.CREDIT, Guid.NewGuid()));
+            new Transaction(Guid.NewGuid(), new Money(0), TransactionType.CREDIT, 1));
 
         Assert.Contains("Transaction amount must be positive", ex.Message);
     }
@@ -44,25 +43,25 @@ public class TransactionTests
     public void Constructor_NegativeAmount_Throws()
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new Transaction("123456", new Money(-10), TransactionType.CREDIT, Guid.NewGuid()));
+            new Transaction(Guid.NewGuid(), new Money(-10), TransactionType.CREDIT, 1));
 
         Assert.Contains("Transaction amount must be positive", ex.Message);
     }
 
     [Fact]
-    public void Constructor_EmptyIdempotencyKey_Throws()
+    public void Constructor_ZeroOccVersion_Throws()
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new Transaction("123456", new Money(100), TransactionType.CREDIT, Guid.Empty));
+            new Transaction(Guid.NewGuid(), new Money(100), TransactionType.CREDIT, 0));
 
-        Assert.Contains("Idempotency key is required", ex.Message);
+        Assert.Contains("OccVersion must be positive", ex.Message);
     }
 
     [Fact]
     public void Constructor_InvalidTransactionType_Throws()
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new Transaction("123456", new Money(100), (TransactionType)999, Guid.NewGuid()));
+            new Transaction(Guid.NewGuid(), new Money(100), (TransactionType)999, 1));
 
         Assert.Contains("Invalid transaction type", ex.Message);
     }
@@ -70,23 +69,24 @@ public class TransactionTests
     [Fact]
     public void Restore_CreatesTransactionWithAllProperties()
     {
-        var idempotencyKey = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var id = Guid.NewGuid();
         var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
 
         var transaction = Transaction.Restore(
-            42,
-            "123456",
+            id,
+            accountId,
             new Money(100.50m),
             TransactionType.CREDIT,
             createdAt,
-            idempotencyKey);
+            1);
 
-        Assert.Equal(42, transaction.Id);
-        Assert.Equal("123456", transaction.AccountNumber);
+        Assert.Equal(id, transaction.Id);
+        Assert.Equal(accountId, transaction.AccountId);
         Assert.Equal(new Money(100.50m), transaction.Amount);
         Assert.Equal(TransactionType.CREDIT, transaction.Type);
         Assert.Equal(createdAt, transaction.CreatedAt);
-        Assert.Equal(idempotencyKey, transaction.IdempotencyKey);
+        Assert.Equal(1, transaction.OccVersion);
     }
 }
 
@@ -95,8 +95,19 @@ public class AccountTests
     [Fact]
     public void Constructor_ValidNumber_CreatesAccount()
     {
-        var account = new Account("123456");
+        var id = Guid.NewGuid();
+        var account = new Account(id, "123456");
 
+        Assert.Equal(id, account.Id);
+        Assert.Equal("123456", account.Number);
+    }
+
+    [Fact]
+    public void Create_GeneratesNewGuid()
+    {
+        var account = Account.Create("123456");
+
+        Assert.NotEqual(Guid.Empty, account.Id);
         Assert.Equal("123456", account.Number);
     }
 
@@ -105,9 +116,17 @@ public class AccountTests
     [InlineData(" ")]
     public void Constructor_InvalidNumber_Throws(string number)
     {
-        var ex = Assert.Throws<ArgumentException>(() => new Account(number));
+        var ex = Assert.Throws<ArgumentException>(() => new Account(Guid.NewGuid(), number));
 
         Assert.Contains("Account number is required", ex.Message);
+    }
+
+    [Fact]
+    public void Constructor_EmptyId_Throws()
+    {
+        var ex = Assert.Throws<ArgumentException>(() => new Account(Guid.Empty, "123456"));
+
+        Assert.Contains("Account ID is required", ex.Message);
     }
 }
 
@@ -116,73 +135,54 @@ public class BalanceSnapshotTests
     [Fact]
     public void Constructor_ValidParameters_CreatesSnapshot()
     {
-        var snapshot = new BalanceSnapshot("123456", new Money(1000.50m), 10, 5);
+        var accountId = Guid.NewGuid();
+        var lastTxnId = Guid.NewGuid();
+        var snapshot = new BalanceSnapshot(accountId, new Money(1000.50m), lastTxnId, 5);
 
-        Assert.Equal("123456", snapshot.AccountNumber);
+        Assert.Equal(accountId, snapshot.AccountId);
         Assert.Equal(new Money(1000.50m), snapshot.Balance);
-        Assert.Equal(10, snapshot.LastTransactionId);
-        Assert.Equal(5, snapshot.Sequence);
+        Assert.Equal(lastTxnId, snapshot.LastTransactionId);
+        Assert.Equal(5, snapshot.OccVersion);
         Assert.True(snapshot.CreatedAt <= DateTime.UtcNow);
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData(" ")]
-    public void Constructor_InvalidAccountNumber_Throws(string accountNumber)
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public void Constructor_InvalidAccountId_Throws(string accountIdStr)
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new BalanceSnapshot(accountNumber, new Money(100), 0, 0));
+            new BalanceSnapshot(Guid.Parse(accountIdStr), new Money(100), Guid.NewGuid(), 0));
 
-        Assert.Contains("Account number is required", ex.Message);
+        Assert.Contains("Account ID is required", ex.Message);
     }
 
     [Fact]
-    public void Constructor_NegativeLastTransactionId_Throws()
+    public void Constructor_ZeroOccVersion_Throws()
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new BalanceSnapshot("123456", new Money(100), -1, 0));
+            new BalanceSnapshot(Guid.NewGuid(), new Money(100), Guid.NewGuid(), 0));
 
-        Assert.Contains("Last transaction ID must be non-negative", ex.Message);
-    }
-
-    [Fact]
-    public void Constructor_NegativeSequence_Throws()
-    {
-        var ex = Assert.Throws<ArgumentException>(() =>
-            new BalanceSnapshot("123456", new Money(100), 0, -1));
-
-        Assert.Contains("Sequence must be non-negative", ex.Message);
-    }
-
-    [Fact]
-    public void Update_ReturnsNewSnapshotWithIncrementedSequence()
-    {
-        var original = new BalanceSnapshot("123456", new Money(100), 10, 5);
-        var updated = original.Update(new Money(200), 15);
-
-        Assert.Equal("123456", updated.AccountNumber);
-        Assert.Equal(new Money(200), updated.Balance);
-        Assert.Equal(15, updated.LastTransactionId);
-        Assert.Equal(6, updated.Sequence);
-        Assert.NotSame(original, updated);
+        Assert.Contains("OccVersion must be positive", ex.Message);
     }
 
     [Fact]
     public void Restore_CreatesSnapshotWithAllProperties()
     {
+        var accountId = Guid.NewGuid();
+        var lastTxnId = Guid.NewGuid();
         var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
 
         var snapshot = BalanceSnapshot.Restore(
-            "123456",
+            accountId,
             new Money(1000.50m),
-            10,
+            lastTxnId,
             5,
             createdAt);
 
-        Assert.Equal("123456", snapshot.AccountNumber);
+        Assert.Equal(accountId, snapshot.AccountId);
         Assert.Equal(new Money(1000.50m), snapshot.Balance);
-        Assert.Equal(10, snapshot.LastTransactionId);
-        Assert.Equal(5, snapshot.Sequence);
+        Assert.Equal(lastTxnId, snapshot.LastTransactionId);
+        Assert.Equal(5, snapshot.OccVersion);
         Assert.Equal(createdAt, snapshot.CreatedAt);
     }
 }
@@ -192,12 +192,10 @@ public class InsufficientBalanceExceptionTests
     [Fact]
     public void Constructor_SetsProperties()
     {
-        var ex = new InsufficientBalanceException("123456", 100, 50);
+        var ex = new InsufficientBalanceException(100, 50);
 
-        Assert.Equal("123456", ex.AccountNumber);
         Assert.Equal(100, ex.Requested);
         Assert.Equal(50, ex.Available);
-        Assert.Contains("123456", ex.Message);
         Assert.Contains("100", ex.Message);
         Assert.Contains("50", ex.Message);
     }

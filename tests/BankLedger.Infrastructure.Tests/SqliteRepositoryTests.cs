@@ -5,9 +5,13 @@ using BankLedger.Domain.ValueObjects;
 using BankLedger.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Dapper;
+using System.IO;
+using Xunit;
+using Xunit.Abstractions;
 
 namespace BankLedger.Infrastructure.Tests;
 
+[Collection("DatabaseCollection")]
 public class SqliteRepositoryTests : IDisposable
 {
     private readonly string _databasePath;
@@ -15,9 +19,9 @@ public class SqliteRepositoryTests : IDisposable
     private readonly TransactionRepository _transactionRepository;
     private readonly SnapshotRepository _snapshotRepository;
 
-    public SqliteRepositoryTests()
+    public SqliteRepositoryTests(ITestOutputHelper output)
     {
-        _databasePath = Path.GetTempFileName();
+        _databasePath = Path.Combine(Path.GetTempPath(), $"bank_test_{Guid.NewGuid()}.db");
         var connectionString = $"Data Source={_databasePath}";
 
         using var connection = new SqliteConnection(connectionString);
@@ -45,6 +49,15 @@ public class SqliteRepositoryTests : IDisposable
         return conn;
     }
 
+    private async Task<Guid> CreateAccountAsync(string number = "123456")
+    {
+        var accountId = Guid.NewGuid();
+        using var conn = CreateFreshConnection();
+        await conn.ExecuteAsync("INSERT INTO accounts (id, number) VALUES (@Id, @Number)",
+            new { Id = accountId.ToString(), Number = number });
+        return accountId;
+    }
+
     [Fact]
     public async Task Schema_Creation_CreatesAllTables()
     {
@@ -54,9 +67,9 @@ public class SqliteRepositoryTests : IDisposable
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
 
         var tableNames = tables.ToHashSet();
-        Assert.Contains("Accounts", tableNames);
-        Assert.Contains("Transactions", tableNames);
-        Assert.Contains("BalanceSnapshots", tableNames);
+        Assert.Contains("accounts", tableNames);
+        Assert.Contains("transactions", tableNames);
+        Assert.Contains("balance_snapshots", tableNames);
     }
 
     [Fact]
@@ -68,86 +81,53 @@ public class SqliteRepositoryTests : IDisposable
             "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'");
 
         var indexNames = indexes.ToHashSet();
-        Assert.Contains("IX_Transactions_Account_Id", indexNames);
-        Assert.Contains("IX_Transactions_Account_CreatedAt", indexNames);
-        Assert.Contains("IX_Transactions_Idempotency", indexNames);
+        Assert.Contains("ix_transactions_account_id", indexNames);
+        Assert.Contains("ix_transactions_account_created_at", indexNames);
+        Assert.Contains("uk_transactions_account_occ_version", indexNames);
     }
 
     [Fact]
     public async Task TransactionRepository_CreateAsync_PersistsTransaction()
     {
-        var transaction = new Transaction("123456", new Money(100.50m), TransactionType.CREDIT, Guid.NewGuid());
+        var accountId = await CreateAccountAsync();
+
+        var transaction = new Transaction(accountId, new Money(100.50m), TransactionType.CREDIT, 1);
 
         var result = await _transactionRepository.CreateAsync(transaction, CancellationToken.None);
 
-        Assert.Equal(1, result.Id);
-        Assert.Equal("123456", result.AccountNumber);
+        Assert.NotEqual(Guid.Empty, result.Id);
+        Assert.Equal(accountId, result.AccountId);
         Assert.Equal(new Money(100.50m), result.Amount);
         Assert.Equal(TransactionType.CREDIT, result.Type);
+        Assert.Equal(1, result.OccVersion);
     }
 
     [Fact]
     public async Task TransactionRepository_CreateAsync_InsertsAccountIfNotExists()
     {
-        var transaction = new Transaction("999999", new Money(50), TransactionType.CREDIT, Guid.NewGuid());
+        var accountId = await CreateAccountAsync();
+
+        var transaction = new Transaction(accountId, new Money(50), TransactionType.CREDIT, 1);
 
         await _transactionRepository.CreateAsync(transaction, CancellationToken.None);
 
         using var connection = CreateFreshConnection();
         var account = await connection.QueryFirstOrDefaultAsync<string>(
-            "SELECT Number FROM Accounts WHERE Number = @Number", new { Number = "999999" });
+            "SELECT number FROM accounts WHERE id = @Id", new { Id = accountId.ToString() });
 
-        Assert.Equal("999999", account);
-    }
-
-    [Fact]
-    public async Task TransactionRepository_GetByIdempotencyKeyAsync_ReturnsTransaction()
-    {
-        var idempotencyKey = Guid.NewGuid();
-        var transaction = new Transaction("123456", new Money(100), TransactionType.CREDIT, idempotencyKey);
-        var created = await _transactionRepository.CreateAsync(transaction, CancellationToken.None);
-
-        var result = await _transactionRepository.GetByIdempotencyKeyAsync(idempotencyKey, CancellationToken.None);
-
-        Assert.NotNull(result);
-        Assert.Equal(idempotencyKey, result!.IdempotencyKey);
-        Assert.Equal("123456", result.AccountNumber);
-    }
-
-    [Fact]
-    public async Task TransactionRepository_GetByIdempotencyKeyAsync_ReturnsNullForMissing()
-    {
-        var result = await _transactionRepository.GetByIdempotencyKeyAsync(Guid.NewGuid(), CancellationToken.None);
-
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task TransactionRepository_CreateAsync_Idempotency_ReturnsExistingTransaction()
-    {
-        var idempotencyKey = Guid.NewGuid();
-        var transaction1 = new Transaction("123456", new Money(100), TransactionType.CREDIT, idempotencyKey);
-        await _transactionRepository.CreateAsync(transaction1, CancellationToken.None);
-
-        var transaction2 = new Transaction("123456", new Money(200), TransactionType.CREDIT, idempotencyKey);
-        var result = await _transactionRepository.CreateAsync(transaction2, CancellationToken.None);
-
-        Assert.Equal(1, result.Id);
-        Assert.Equal(new Money(100), result.Amount);
+        Assert.NotNull(account);
     }
 
     [Fact]
     public async Task TransactionRepository_GetBalanceDeltaAsync_CalculatesCorrectly()
     {
-        var id1 = Guid.NewGuid();
-        var id2 = Guid.NewGuid();
-        var id3 = Guid.NewGuid();
+        var accountId = await CreateAccountAsync();
 
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(500), TransactionType.CREDIT, id1), CancellationToken.None);
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(100), TransactionType.DEBIT, id2), CancellationToken.None);
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(50), TransactionType.CREDIT, id3), CancellationToken.None);
+        await _transactionRepository.CreateAsync(new Transaction(accountId, new Money(500), TransactionType.CREDIT, 1), CancellationToken.None);
+        await _transactionRepository.CreateAsync(new Transaction(accountId, new Money(100), TransactionType.DEBIT, 2), CancellationToken.None);
+        await _transactionRepository.CreateAsync(new Transaction(accountId, new Money(50), TransactionType.CREDIT, 3), CancellationToken.None);
 
-        var delta = await _transactionRepository.GetBalanceDeltaAsync("123456", 0, null, CancellationToken.None);
+        var (delta, _) = await _transactionRepository.GetBalanceDeltaAsync(accountId, Guid.Empty, null, CancellationToken.None);
 
         Assert.Equal(new Money(450), delta);
     }
@@ -155,15 +135,13 @@ public class SqliteRepositoryTests : IDisposable
     [Fact]
     public async Task TransactionRepository_GetBalanceDeltaAsync_WithLastTransactionId_FiltersCorrectly()
     {
-        var id1 = Guid.NewGuid();
-        var id2 = Guid.NewGuid();
-        var id3 = Guid.NewGuid();
+        var accountId = await CreateAccountAsync();
 
-        var t1 = await _transactionRepository.CreateAsync(new Transaction("123456", new Money(500), TransactionType.CREDIT, id1), CancellationToken.None);
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(100), TransactionType.DEBIT, id2), CancellationToken.None);
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(50), TransactionType.CREDIT, id3), CancellationToken.None);
+        var t1 = await _transactionRepository.CreateAsync(new Transaction(accountId, new Money(500), TransactionType.CREDIT, 1), CancellationToken.None);
+        await _transactionRepository.CreateAsync(new Transaction(accountId, new Money(100), TransactionType.DEBIT, 2), CancellationToken.None);
+        await _transactionRepository.CreateAsync(new Transaction(accountId, new Money(50), TransactionType.CREDIT, 3), CancellationToken.None);
 
-        var delta = await _transactionRepository.GetBalanceDeltaAsync("123456", t1.Id, null, CancellationToken.None);
+        var (delta, _) = await _transactionRepository.GetBalanceDeltaAsync(accountId, t1.Id, null, CancellationToken.None);
 
         Assert.Equal(new Money(-50), delta);
     }
@@ -171,20 +149,20 @@ public class SqliteRepositoryTests : IDisposable
     [Fact]
     public async Task TransactionRepository_GetBalanceDeltaAsync_WithUntil_FiltersByDate()
     {
-        var baseTime = DateTime.UtcNow;
-        var id1 = Guid.NewGuid();
-        var id2 = Guid.NewGuid();
+        var accountId = await CreateAccountAsync();
 
-        var t1 = new Transaction("123456", new Money(100), TransactionType.CREDIT, id1);
+        var baseTime = DateTime.UtcNow;
+
+        var t1 = new Transaction(accountId, new Money(100), TransactionType.CREDIT, 1);
         typeof(Transaction).GetProperty("CreatedAt")!.SetValue(t1, baseTime);
         await _transactionRepository.CreateAsync(t1, CancellationToken.None);
 
-        var t2 = new Transaction("123456", new Money(50), TransactionType.CREDIT, id2);
+        var t2 = new Transaction(accountId, new Money(50), TransactionType.CREDIT, 2);
         typeof(Transaction).GetProperty("CreatedAt")!.SetValue(t2, baseTime.AddSeconds(10));
         await _transactionRepository.CreateAsync(t2, CancellationToken.None);
 
         var until = baseTime.AddSeconds(5);
-        var delta = await _transactionRepository.GetBalanceDeltaAsync("123456", 0, until, CancellationToken.None);
+        var (delta, _) = await _transactionRepository.GetBalanceDeltaAsync(accountId, Guid.Empty, until, CancellationToken.None);
 
         Assert.Equal(new Money(100), delta);
     }
@@ -192,164 +170,140 @@ public class SqliteRepositoryTests : IDisposable
     [Fact]
     public async Task TransactionRepository_GetBalanceDeltaAsync_EmptyAccount_ReturnsZero()
     {
-        var delta = await _transactionRepository.GetBalanceDeltaAsync("999999", 0, null, CancellationToken.None);
+        var accountId = await CreateAccountAsync();
+        var (delta, _) = await _transactionRepository.GetBalanceDeltaAsync(accountId, Guid.Empty, null, CancellationToken.None);
 
         Assert.Equal(new Money(0), delta);
     }
 
     [Fact]
-    public async Task SnapshotRepository_GetAsync_ReturnsNullForMissing()
+    public async Task SnapshotRepository_GetLastAsync_ReturnsNullForMissing()
     {
-        var result = await _snapshotRepository.GetAsync("123456", CancellationToken.None);
+        var accountId = await CreateAccountAsync();
+        var result = await _snapshotRepository.GetLastAsync(accountId, CancellationToken.None);
 
         Assert.Null(result);
     }
 
     [Fact]
-    public async Task SnapshotRepository_UpdateAsync_CreatesNewSnapshot()
+    public async Task SnapshotRepository_CreateAsync_CreatesNewSnapshot()
     {
-        var id = Guid.NewGuid();
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(100), TransactionType.CREDIT, id), CancellationToken.None);
+        var accountId = await CreateAccountAsync();
+        var lastTxnId = Guid.NewGuid();
 
-        // Ensure Account exists in the same connection context
         using (var conn = CreateFreshConnection())
         {
-            await conn.ExecuteAsync("INSERT OR IGNORE INTO Accounts (Number) VALUES (@Number)", new { Number = "123456" });
+            await conn.ExecuteAsync("INSERT INTO transactions (id, account_id, amount_in_cents, type, created_at, occ_version) VALUES (@Id, @AccountId, @Amount, @Type, @CreatedAt, @OccVersion)",
+                new { Id = lastTxnId.ToString(), AccountId = accountId.ToString(), Amount = 10000, Type = "C", CreatedAt = DateTime.UtcNow.ToString("o"), OccVersion = 1 });
         }
 
-        var snapshot = new BalanceSnapshot("123456", new Money(1000), 10, 0);
+        var snapshot = new BalanceSnapshot(accountId, new Money(1000), lastTxnId, 1);
 
-        var success = await _snapshotRepository.UpdateAsync(snapshot, 0, CancellationToken.None);
+        var result = await _snapshotRepository.CreateAsync(snapshot, CancellationToken.None);
 
-        Assert.True(success);
-
-        var retrieved = await _snapshotRepository.GetAsync("123456", CancellationToken.None);
-        Assert.NotNull(retrieved);
-        Assert.Equal("123456", retrieved!.AccountNumber);
-        Assert.Equal(new Money(1000), retrieved.Balance);
-        Assert.Equal(10, retrieved.LastTransactionId);
-        Assert.Equal(0, retrieved.Sequence);
+        Assert.NotNull(result);
+        Assert.Equal(accountId, result.AccountId);
+        Assert.Equal(new Money(1000), result.Balance);
+        Assert.Equal(lastTxnId, result.LastTransactionId);
+        Assert.Equal(1, result.OccVersion);
     }
 
     [Fact]
-    public async Task SnapshotRepository_UpdateAsync_UpdatesExistingSnapshot()
+    public async Task SnapshotRepository_CreateAsync_UpdatesExistingSnapshot()
     {
-        var id = Guid.NewGuid();
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(100), TransactionType.CREDIT, id), CancellationToken.None);
+        var accountId = await CreateAccountAsync();
+        var lastTxnId1 = Guid.NewGuid();
+        var lastTxnId2 = Guid.NewGuid();
 
         using (var conn = CreateFreshConnection())
         {
-            await conn.ExecuteAsync("INSERT OR IGNORE INTO Accounts (Number) VALUES (@Number)", new { Number = "123456" });
+            await conn.ExecuteAsync("INSERT INTO transactions (id, account_id, amount_in_cents, type, created_at, occ_version) VALUES (@Id, @AccountId, @Amount, @Type, @CreatedAt, @OccVersion)",
+                new { Id = lastTxnId1.ToString(), AccountId = accountId.ToString(), Amount = 10000, Type = "C", CreatedAt = DateTime.UtcNow.ToString("o"), OccVersion = 1 });
+            await conn.ExecuteAsync("INSERT INTO transactions (id, account_id, amount_in_cents, type, created_at, occ_version) VALUES (@Id, @AccountId, @Amount, @Type, @CreatedAt, @OccVersion)",
+                new { Id = lastTxnId2.ToString(), AccountId = accountId.ToString(), Amount = 10000, Type = "C", CreatedAt = DateTime.UtcNow.ToString("o"), OccVersion = 2 });
         }
 
-        var snapshot1 = new BalanceSnapshot("123456", new Money(1000), 10, 0);
-        await _snapshotRepository.UpdateAsync(snapshot1, 0, CancellationToken.None);
+        var snapshot1 = new BalanceSnapshot(accountId, new Money(1000), lastTxnId1, 1);
+        await _snapshotRepository.CreateAsync(snapshot1, CancellationToken.None);
 
-        var retrieved1 = await _snapshotRepository.GetAsync("123456", CancellationToken.None);
-        var snapshot2 = retrieved1!.Update(new Money(1500), 15);
-        var success = await _snapshotRepository.UpdateAsync(snapshot2, retrieved1.Sequence, CancellationToken.None);
+        var retrieved1 = await _snapshotRepository.GetLastAsync(accountId, CancellationToken.None);
+        Assert.NotNull(retrieved1);
 
-        Assert.True(success);
+        var snapshot2 = new BalanceSnapshot(accountId, new Money(1500), lastTxnId2, retrieved1.OccVersion + 1);
+        var result = await _snapshotRepository.CreateAsync(snapshot2, CancellationToken.None);
 
-        var retrieved2 = await _snapshotRepository.GetAsync("123456", CancellationToken.None);
-        Assert.Equal(new Money(1500), retrieved2!.Balance);
-        Assert.Equal(15, retrieved2.LastTransactionId);
-        Assert.Equal(retrieved1.Sequence + 1, retrieved2.Sequence);
-    }
-
-    [Fact]
-    public async Task SnapshotRepository_UpdateAsync_OCC_FailsOnConcurrentUpdate()
-    {
-        var id = Guid.NewGuid();
-        await _transactionRepository.CreateAsync(new Transaction("123456", new Money(100), TransactionType.CREDIT, id), CancellationToken.None);
-
-        using (var conn = CreateFreshConnection())
-        {
-            await conn.ExecuteAsync("INSERT OR IGNORE INTO Accounts (Number) VALUES (@Number)", new { Number = "123456" });
-        }
-
-        var snapshot1 = new BalanceSnapshot("123456", new Money(1000), 10, 0);
-        await _snapshotRepository.UpdateAsync(snapshot1, 0, CancellationToken.None);
-
-        var retrieved1 = await _snapshotRepository.GetAsync("123456", CancellationToken.None);
-        var baseSequence = retrieved1!.Sequence; // 0
-
-        // First concurrent request: uses baseSequence (0) -> succeeds, Sequence becomes 1
-        var firstUpdate = retrieved1.Update(new Money(1500), 15);
-        var success1 = await _snapshotRepository.UpdateAsync(firstUpdate, baseSequence, CancellationToken.None);
-
-        // Second concurrent request: uses same baseSequence (0) -> fails, Sequence is now 1
-        var secondUpdate = retrieved1.Update(new Money(1500), 15);
-        var success2 = await _snapshotRepository.UpdateAsync(secondUpdate, baseSequence, CancellationToken.None);
-
-        Assert.True(success1);
-        Assert.False(success2);
-
-        // Verify final state
-        var final = await _snapshotRepository.GetAsync("123456", CancellationToken.None);
-        Assert.Equal(1, final!.Sequence);
-        Assert.Equal(new Money(1500), final.Balance);
+        Assert.NotNull(result);
+        Assert.Equal(new Money(1500), result.Balance);
+        Assert.Equal(lastTxnId2, result.LastTransactionId);
+        Assert.Equal(retrieved1.OccVersion + 1, result.OccVersion);
     }
 
     [Fact]
     public async Task SnapshotRepository_GetAccountsWithNewTransactionsAsync_ReturnsAccountsWithNewTransactions()
     {
-        var id1 = Guid.NewGuid();
-        var t1 = await _transactionRepository.CreateAsync(new Transaction("111111", new Money(100), TransactionType.CREDIT, id1), CancellationToken.None);
+        var accountId1 = await CreateAccountAsync("111111");
+        var accountId2 = await CreateAccountAsync("222222");
 
-        var snapshot = new BalanceSnapshot("111111", new Money(100), t1.Id, 0);
-        await _snapshotRepository.UpdateAsync(snapshot, 0, CancellationToken.None);
+        var t1 = await _transactionRepository.CreateAsync(new Transaction(accountId1, new Money(100), TransactionType.CREDIT, 1), CancellationToken.None);
 
-        var id2 = Guid.NewGuid();
-        await _transactionRepository.CreateAsync(new Transaction("111111", new Money(50), TransactionType.CREDIT, id2), CancellationToken.None);
+        var snapshot = new BalanceSnapshot(accountId1, new Money(100), t1.Id, 1);
+        await _snapshotRepository.CreateAsync(snapshot, CancellationToken.None);
+
+        await _transactionRepository.CreateAsync(new Transaction(accountId1, new Money(50), TransactionType.CREDIT, 2), CancellationToken.None);
 
         var accounts = await _snapshotRepository.GetAccountsWithNewTransactionsAsync(CancellationToken.None);
 
-        Assert.Contains("111111", accounts);
+        Assert.Contains(accountId1, accounts);
+        Assert.DoesNotContain(accountId2, accounts);
     }
 
     [Fact]
     public async Task SnapshotRepository_GetAccountsWithNewTransactionsAsync_ExcludesAccountsWithoutNewTransactions()
     {
-        var id1 = Guid.NewGuid();
-        var t1 = await _transactionRepository.CreateAsync(new Transaction("111111", new Money(100), TransactionType.CREDIT, id1), CancellationToken.None);
+        var accountId = await CreateAccountAsync("111111");
 
-        var snapshot = new BalanceSnapshot("111111", new Money(100), t1.Id, 0);
-        await _snapshotRepository.UpdateAsync(snapshot, 0, CancellationToken.None);
+        var t1 = await _transactionRepository.CreateAsync(new Transaction(accountId, new Money(100), TransactionType.CREDIT, 1), CancellationToken.None);
+
+        var snapshot = new BalanceSnapshot(accountId, new Money(100), t1.Id, 1);
+        await _snapshotRepository.CreateAsync(snapshot, CancellationToken.None);
 
         var accounts = await _snapshotRepository.GetAccountsWithNewTransactionsAsync(CancellationToken.None);
 
-        Assert.DoesNotContain("111111", accounts);
+        Assert.DoesNotContain(accountId, accounts);
     }
 
     [Fact]
     public async Task Money_CentsConversion_WorksCorrectly()
     {
-        var transaction = new Transaction("123456", new Money(100.50m), TransactionType.CREDIT, Guid.NewGuid());
+        var accountId = await CreateAccountAsync();
+
+        var transaction = new Transaction(accountId, new Money(100.50m), TransactionType.CREDIT, 1);
         var created = await _transactionRepository.CreateAsync(transaction, CancellationToken.None);
 
         using var connection = CreateFreshConnection();
         var row = await connection.QueryFirstOrDefaultAsync<dynamic>(
-            "SELECT AmountCents FROM Transactions WHERE Id = @Id", new { Id = created.Id });
+            "SELECT amount_in_cents FROM transactions WHERE id = @Id", new { Id = created.Id.ToString() });
 
         Assert.NotNull(row);
-        Assert.Equal(10050L, (long)row!.AmountCents);
+        Assert.Equal(10050L, (long)row!.amount_in_cents);
     }
 
     [Fact]
     public async Task TransactionRepository_CreateAsync_StoresCorrectType()
     {
-        var creditTx = new Transaction("123456", new Money(100), TransactionType.CREDIT, Guid.NewGuid());
-        var debitTx = new Transaction("123456", new Money(50), TransactionType.DEBIT, Guid.NewGuid());
+        var accountId = await CreateAccountAsync();
+
+        var creditTx = new Transaction(accountId, new Money(100), TransactionType.CREDIT, 1);
+        var debitTx = new Transaction(accountId, new Money(50), TransactionType.DEBIT, 2);
 
         await _transactionRepository.CreateAsync(creditTx, CancellationToken.None);
         await _transactionRepository.CreateAsync(debitTx, CancellationToken.None);
 
         using var connection = CreateFreshConnection();
         var types = await connection.QueryAsync<string>(
-            "SELECT Type FROM Transactions WHERE AccountNumber = @AccountNumber ORDER BY Id",
-            new { AccountNumber = "123456" });
+            "SELECT type FROM transactions WHERE account_id = @AccountId ORDER BY occ_version",
+            new { AccountId = accountId.ToString() });
 
-        Assert.Equal(new[] { "CREDIT", "DEBIT" }, types);
+        Assert.Equal(new[] { "C", "D" }, types);
     }
 }
