@@ -6,7 +6,7 @@ Sistema de ledger financeiro para registro de movimentações financeiras, const
 ## Visão Geral
 
 API REST para registro de transações financeiras (créditos/débitos) e consulta de saldo consolidado com suporte a:
-- **Idempotência** via header `Idempotency-Key`
+- **Idempotência** via header `Idempotency-Key` evitando lançamentos duplos (Res. **BCB 2/2020** e Res. **CMN 4.966/2021**)
 - **Concorrência segura** com controle otimista (OCC) e transações atômicas
 - **Snapshots periódicos** para performance de consulta de saldo
 - **Saldo histórico**
@@ -203,9 +203,8 @@ curl -X POST http://localhost:8080/transactions \
 ## Documentação
 
 - [Arquitetura](docs/ARCHITECTURE.md) - Hexagonal, domínio, infra, trade-offs
-- [Concorrência](docs/CONCURRENCY.md) - Transações, OCC, idempotência, SQLite vs PostgreSQL
 - [API Reference](docs/API.md) - Endpoints, headers, códigos, exemplos
-- [Roadmap](docs/ROADMAP.md) - Próximos passos, message broker, PostgreSQL, observabilidade
+- [Roadmap](docs/ROADMAP.md) - Próximos passos e decisões de arquitetura com mais detalhes
 
 ---
 
@@ -234,7 +233,7 @@ Para mais detalhes de até onde poderíamos chegar com prazo, equipe e orçament
 | **Banker's Rounding** | Padrão financeiro |
 | **Snapshot assíncrono** | Baixo custo para o banco; melhora a performance, e é uma iniciativa simplificada de CQRS |
 | **BackgroundService** | Simplicidade da implementação |
-| **Auth simbólico** | Em uma aplicação real, usaria JWT, JWS ou mTLS. Mas nessa PoC, usamos um "token simbólico" |
+| **Auth simbólico** | Em uma aplicação real, usaria JWT/JWS, mTLS ou OAuth2. Mas nessa PoC, escolhi um "token simbólico" |
 | **OCC-Version** | Uma forma simples de evitar concorrência por **Optimistic Concurrency Control**. Em sistemas com muita concorrência, essa estratégia pode chegar um overhead de degradação exponencial (O(n²))
 | **Lock/Redis** | As implementações do `IdempotencyLock` e `IConcurrencyStore` foram feitas em memória, porém em uma aplicação real, com escala horizontal (mais instancias/pods) é necessário distribuir esses locks e store. Nesse é recomendado o uso de Redis em Cluster ou MemGrid |
 
