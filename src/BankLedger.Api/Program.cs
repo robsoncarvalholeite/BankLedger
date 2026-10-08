@@ -1,3 +1,4 @@
+using DotNetEnv;
 using BankLedger.Domain.Ports;
 using BankLedger.Domain.UseCases;
 using BankLedger.Infrastructure.Persistence;
@@ -7,6 +8,8 @@ using BankLedger.Api.Filters;
 using Microsoft.Data.Sqlite;
 using System.Text.Json.Serialization;
 using Microsoft.OpenApi;
+
+Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,7 +39,9 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-var connectionString = builder.Configuration.GetConnectionString("Default") ?? "Data Source=bank.db";
+var connectionString = builder.Configuration.GetConnectionString("Default") 
+    ?? builder.Configuration["CONNECTION_STRING"] 
+    ?? "Data Source=bank.db";
 
 builder.Services.AddSingleton<SqliteConnectionFactory>(_ => new SqliteConnectionFactory(connectionString));
 builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
