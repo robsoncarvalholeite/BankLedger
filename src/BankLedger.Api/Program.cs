@@ -9,7 +9,7 @@ using Microsoft.Data.Sqlite;
 using System.Text.Json.Serialization;
 using Microsoft.OpenApi;
 
-Env.Load();
+Env.Load("../../.env");
 
 var builder = WebApplication.CreateBuilder(args);
 
